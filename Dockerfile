@@ -44,7 +44,7 @@ ARG AIRFLOW_GID="50000"
 
 ARG CASS_DRIVER_BUILD_CONCURRENCY="8"
 
-ARG PYTHON_BASE_IMAGE="avainformationsystems/base-images/python:3.7-slim-buster"
+ARG PYTHON_BASE_IMAGE="avainformationsystems.azurecr.io/base-images/python:3.7-slim-buster"
 ARG PYTHON_MAJOR_MINOR_VERSION="3.7"
 ARG AIRFLOW_PIP_VERSION=21.1.1
 
