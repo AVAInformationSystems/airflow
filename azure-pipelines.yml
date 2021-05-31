@@ -1,0 +1,55 @@
+trigger:
+  - master
+
+pr:
+  - master
+
+pool:
+  name: main-pool-light
+
+stages:
+- stage:
+  jobs:
+  - job:
+    variables:
+      - group: common
+    displayName: 'Apache airflow image'
+    timeoutInMinutes: 20
+    steps:
+      - task: Bash@3
+        displayName: Fetch submodules
+        inputs:
+          targetType: inline
+          script: |
+            git submodule update --init
+      - ${{ if contains(variables['Build.SourceBranch'], 'refs/heads/master') }}:
+        - task: InstallSSHKey@0
+          displayName: Install github ssh key
+          inputs:
+            knownHostsEntry: $(githubHostSignature)
+            sshKeySecureFile: id_rsa
+
+        - task: Bash@3
+          displayName: Prepare git params
+          inputs:
+            targetType: inline
+            script: |
+              git config --global user.name 'ava-bot'
+              git config --global user.email 'service-user@ava.info'
+              GitCommit="${{variables['Build.SourceVersion']}}"
+              GitCommitShort=${GitCommit:0:7}
+              echo "##vso[task.setvariable variable=GitCommitShort]${GitCommitShort}"
+        - task: Docker@2
+          displayName: Login to ACR
+          inputs:
+            command: login
+            containerRegistry: ava-acr-main
+        - task: Docker@2
+          displayName: Build and push Docker image
+          inputs:
+            repository: base-images/airflow-2.0.0-slim
+            containerRegistry: ava-acr-main
+            tags: |
+              az-test
+              dev-$(GitCommitShort)
+            Dockerfile: Dockerfile

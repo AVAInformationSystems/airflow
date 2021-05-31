@@ -34,7 +34,7 @@
 #                        much smaller.
 #
 ARG AIRFLOW_VERSION="2.0.2"
-ARG AIRFLOW_EXTRAS="async,amazon,celery,cncf.kubernetes,docker,dask,elasticsearch,ftp,grpc,hashicorp,http,ldap,google,microsoft.azure,mysql,postgres,redis,sendgrid,sftp,slack,ssh,statsd,virtualenv"
+ARG AIRFLOW_EXTRAS="async,cncf.kubernetes,docker,dask,http,ldap,postgres,sftp,slack,ssh,statsd,virtualenv"
 ARG ADDITIONAL_AIRFLOW_EXTRAS=""
 ARG ADDITIONAL_PYTHON_DEPS=""
 
@@ -42,8 +42,10 @@ ARG AIRFLOW_HOME=/opt/airflow
 ARG AIRFLOW_UID="50000"
 ARG AIRFLOW_GID="50000"
 
-ARG PYTHON_BASE_IMAGE="python:3.6-slim-buster"
+ARG CASS_DRIVER_BUILD_CONCURRENCY="8"
 
+ARG PYTHON_BASE_IMAGE="avainformationsystems/base-images/python:3.7-slim-buster"
+ARG PYTHON_MAJOR_MINOR_VERSION="3.7"
 ARG AIRFLOW_PIP_VERSION=21.1.1
 
 # By default PIP has progress bar but you can disable it.
