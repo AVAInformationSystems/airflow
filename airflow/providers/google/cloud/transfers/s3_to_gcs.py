@@ -110,7 +110,6 @@ class S3ToGCSOperator(S3ListOperator):
     )
     ui_color = '#e09411'
 
-    # pylint: disable=too-many-arguments
     def __init__(
         self,
         *,
@@ -148,7 +147,8 @@ class S3ToGCSOperator(S3ListOperator):
         self.gzip = gzip
         self.google_impersonation_chain = google_impersonation_chain
 
-        if dest_gcs and not gcs_object_is_directory(self.dest_gcs):
+    def _check_inputs(self) -> None:
+        if self.dest_gcs and not gcs_object_is_directory(self.dest_gcs):
             self.log.info(
                 'Destination Google Cloud Storage path is not a valid '
                 '"directory", define a path that ends with a slash "/" or '
@@ -159,6 +159,7 @@ class S3ToGCSOperator(S3ListOperator):
             )
 
     def execute(self, context):
+        self._check_inputs()
         # use the super method to list all the files in an S3 bucket/key
         files = super().execute(context)
 
@@ -168,7 +169,6 @@ class S3ToGCSOperator(S3ListOperator):
             impersonation_chain=self.google_impersonation_chain,
         )
 
-        # pylint: disable=too-many-nested-blocks
         if not self.replace:
             # if we are not replacing -> list all files in the GCS bucket
             # and only keep those files which are present in

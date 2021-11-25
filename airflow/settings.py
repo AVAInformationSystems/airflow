@@ -25,13 +25,13 @@ import warnings
 from typing import Optional
 
 import pendulum
+import sqlalchemy
 from sqlalchemy import create_engine, exc
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.orm.session import Session as SASession
 from sqlalchemy.pool import NullPool
 
-# pylint: disable=unused-import
 from airflow.configuration import AIRFLOW_HOME, WEBSERVER_CONFIG, conf  # NOQA F401
 from airflow.executors import executor_constants
 from airflow.logging_config import configure_logging
@@ -47,7 +47,7 @@ try:
         TIMEZONE = pendulum.tz.local_timezone()
     else:
         TIMEZONE = pendulum.tz.timezone(tz)
-except Exception:  # pylint: disable=broad-except
+except Exception:
     pass
 log.info("Configured default timezone %s", TIMEZONE)
 
@@ -79,7 +79,7 @@ engine: Optional[Engine] = None
 Session: Optional[SASession] = None
 
 # The JSON library to use for DAG Serialization and De-Serialization
-json = json  # pylint: disable=self-assigning-variable
+json = json
 
 # Dictionary containing State and colors associated to each state to
 # display on the Webserver
@@ -93,6 +93,7 @@ STATE_COLORS = {
     "upstream_failed": "orange",
     "skipped": "pink",
     "scheduled": "tan",
+    "deferred": "mediumpurple",
 }
 
 
@@ -118,7 +119,7 @@ def custom_show_warning(message, category, filename, lineno, file=None, line=Non
 warnings.showwarning = custom_show_warning
 
 
-def task_policy(task) -> None:  # pylint: disable=unused-argument
+def task_policy(task) -> None:
     """
     This policy setting allows altering tasks after they are loaded in
     the DagBag. It allows administrator to rewire some task's parameters.
@@ -141,7 +142,7 @@ def task_policy(task) -> None:  # pylint: disable=unused-argument
     """
 
 
-def dag_policy(dag) -> None:  # pylint: disable=unused-argument
+def dag_policy(dag) -> None:
     """
     This policy setting allows altering DAGs after they are loaded in
     the DagBag. It allows administrator to rewire some DAG's parameters.
@@ -161,7 +162,7 @@ def dag_policy(dag) -> None:  # pylint: disable=unused-argument
     """
 
 
-def task_instance_mutation_hook(task_instance):  # pylint: disable=unused-argument
+def task_instance_mutation_hook(task_instance):
     """
     This setting allows altering task instances before they are queued by
     the Airflow scheduler.
@@ -176,7 +177,7 @@ def task_instance_mutation_hook(task_instance):  # pylint: disable=unused-argume
     """
 
 
-def pod_mutation_hook(pod):  # pylint: disable=unused-argument
+def pod_mutation_hook(pod):
     """
     This setting allows altering ``kubernetes.client.models.V1Pod`` object
     before they are passed to the Kubernetes client by the ``PodLauncher``
@@ -191,7 +192,6 @@ def pod_mutation_hook(pod):  # pylint: disable=unused-argument
     """
 
 
-# pylint: disable=global-statement
 def configure_vars():
     """Configure Global Variables from airflow.cfg"""
     global SQL_ALCHEMY_CONN
@@ -235,6 +235,27 @@ def configure_orm(disable_connection_pool=False):
             expire_on_commit=False,
         )
     )
+    if engine.dialect.name == 'mssql':
+        session = Session()
+        try:
+            result = session.execute(
+                sqlalchemy.text(
+                    'SELECT is_read_committed_snapshot_on FROM sys.databases WHERE name=:database_name'
+                ),
+                params={"database_name": engine.url.database},
+            )
+            data = result.fetchone()[0]
+            if data != 1:
+                log.critical("MSSQL database MUST have READ_COMMITTED_SNAPSHOT enabled.")
+                log.critical(f"The database {engine.url.database} has it disabled.")
+                log.critical("This will cause random deadlocks, Refusing to start.")
+                log.critical(
+                    "See https://airflow.apache.org/docs/apache-airflow/stable/howto/"
+                    "set-up-database.html#setting-up-a-mssql-database"
+                )
+                raise Exception("MSSQL database MUST have READ_COMMITTED_SNAPSHOT enabled.")
+        finally:
+            session.close()
 
 
 def prepare_engine_args(disable_connection_pool=False):
@@ -293,7 +314,13 @@ def prepare_engine_args(disable_connection_pool=False):
     # 'READ COMMITTED' is the default value for PostgreSQL.
     # More information here:
     # https://dev.mysql.com/doc/refman/8.0/en/innodb-transaction-isolation-levels.html"
-    if SQL_ALCHEMY_CONN.startswith('mysql'):
+
+    # Similarly MSSQL default isolation level should be set to READ COMMITTED.
+    # We also make sure that READ_COMMITTED_SNAPSHOT option is on, in order to avoid deadlocks when
+    # Select queries are running. This is by default enforced during init/upgrade. More information:
+    # https://docs.microsoft.com/en-us/sql/t-sql/statements/set-transaction-isolation-level-transact-sql
+
+    if SQL_ALCHEMY_CONN.startswith(('mysql', 'mssql')):
         engine_args['isolation_level'] = 'READ COMMITTED'
 
     return engine_args
@@ -317,24 +344,24 @@ def configure_adapters():
     """Register Adapters and DB Converters"""
     from pendulum import DateTime as Pendulum
 
-    try:
+    if SQL_ALCHEMY_CONN.startswith('sqlite'):
         from sqlite3 import register_adapter
 
         register_adapter(Pendulum, lambda val: val.isoformat(' '))
-    except ImportError:
-        pass
-    try:
-        import MySQLdb.converters
 
-        MySQLdb.converters.conversions[Pendulum] = MySQLdb.converters.DateTime2literal
-    except ImportError:
-        pass
-    try:
-        import pymysql.converters
+    if SQL_ALCHEMY_CONN.startswith('mysql'):
+        try:
+            import MySQLdb.converters
 
-        pymysql.converters.conversions[Pendulum] = pymysql.converters.escape_datetime
-    except ImportError:
-        pass
+            MySQLdb.converters.conversions[Pendulum] = MySQLdb.converters.DateTime2literal
+        except ImportError:
+            pass
+        try:
+            import pymysql.converters
+
+            pymysql.converters.conversions[Pendulum] = pymysql.converters.escape_datetime
+        except ImportError:
+            pass
 
 
 def validate_session():
@@ -346,12 +373,12 @@ def validate_session():
         check_session = sessionmaker(bind=engine)
         session = check_session()
         try:
-            session.execute("select 1")  # pylint: disable=no-member
+            session.execute("select 1")
             conn_status = True
         except exc.DBAPIError as err:
             log.error(err)
             conn_status = False
-        session.close()  # pylint: disable=no-member
+        session.close()
         return conn_status
 
 
@@ -410,11 +437,11 @@ def get_session_lifetime_config():
 
 def import_local_settings():
     """Import airflow_local_settings.py files to allow overriding any configs in settings.py file"""
-    try:  # pylint: disable=too-many-nested-blocks
+    try:
         import airflow_local_settings
 
         if hasattr(airflow_local_settings, "__all__"):
-            for i in airflow_local_settings.__all__:  # pylint: disable=no-member
+            for i in airflow_local_settings.__all__:
                 globals()[i] = getattr(airflow_local_settings, i)
         else:
             for k, v in airflow_local_settings.__dict__.items():
@@ -433,8 +460,18 @@ def import_local_settings():
             del globals()["policy"]
 
         log.info("Loaded airflow_local_settings from %s .", airflow_local_settings.__file__)
+    except ModuleNotFoundError as e:
+        if e.name == "airflow_local_settings":
+            log.debug("No airflow_local_settings to import.", exc_info=True)
+        else:
+            log.critical(
+                "Failed to import airflow_local_settings due to a transitive module not found error.",
+                exc_info=True,
+            )
+            raise
     except ImportError:
-        log.debug("Failed to import airflow_local_settings.", exc_info=True)
+        log.critical("Failed to import airflow_local_settings.", exc_info=True)
+        raise
 
 
 def initialize():
@@ -453,9 +490,6 @@ def initialize():
     atexit.register(dispose_orm)
 
 
-# pylint: enable=global-statement
-
-
 # Const stuff
 
 KILOBYTE = 1024
@@ -470,10 +504,6 @@ MIN_SERIALIZED_DAG_UPDATE_INTERVAL = conf.getint('core', 'min_serialized_dag_upd
 # Fetching serialized DAG can not be faster than a minimum interval to reduce database
 # read rate. This config controls when your DAGs are updated in the Webserver
 MIN_SERIALIZED_DAG_FETCH_INTERVAL = conf.getint('core', 'min_serialized_dag_fetch_interval', fallback=10)
-
-# Whether to persist DAG files code in DB. If set to True, Webserver reads file contents
-# from DB instead of trying to access files in a DAG folder.
-STORE_DAG_CODE = conf.getboolean("core", "store_dag_code", fallback=True)
 
 # If donot_modify_handlers=True, we do not modify logging handlers in task_run command
 # If the flag is set to False, we remove all handlers from the root logger
@@ -517,3 +547,22 @@ HIDE_SENSITIVE_VAR_CONN_FIELDS = conf.getboolean('core', 'hide_sensitive_var_con
 # By default this is off, but is automatically configured on when running task
 # instances
 MASK_SECRETS_IN_LOGS = False
+
+# Display alerts on the dashboard
+# Useful for warning about setup issues or announcing changes to end users
+# List of UIAlerts, which allows for specifying the message, category, and roles the
+# message should be shown to. For example:
+#   from airflow.www.utils import UIAlert
+#
+#   DASHBOARD_UIALERTS = [
+#       UIAlert("Welcome to Airflow"),  # All users
+#       UIAlert("Airflow update happening next week", roles=["User"]),  # Only users with the User role
+#       # A flash message with html:
+#       UIAlert('Visit <a href="http://airflow.apache.org">airflow.apache.org</a>', html=True),
+#   ]
+#
+# DASHBOARD_UIALERTS: List["UIAlert"]
+DASHBOARD_UIALERTS = []
+
+# Prefix used to identify tables holding data moved during migration.
+AIRFLOW_MOVED_TABLE_PREFIX = "_airflow_moved"

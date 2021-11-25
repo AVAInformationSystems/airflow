@@ -18,9 +18,9 @@
 ################################
 ## Airflow Run Migrations
 #################################
-{{- $nodeSelector := or .Values.webserver.nodeSelector .Values.nodeSelector }}
-{{- $affinity := or .Values.webserver.affinity .Values.affinity }}
-{{- $tolerations := or .Values.webserver.tolerations .Values.tolerations }}
+{{- $nodeSelector := or .Values.migrateDatabaseJob.nodeSelector .Values.nodeSelector }}
+{{- $affinity := or .Values.migrateDatabaseJob.affinity .Values.affinity }}
+{{- $tolerations := or .Values.migrateDatabaseJob.tolerations .Values.tolerations }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -34,10 +34,16 @@ metadata:
 {{- with .Values.labels }}
 {{ toYaml . | indent 4 }}
 {{- end }}
+  {{- $annotations := dict }}
+  {{- if .Values.migrateDatabaseJob.useHelmHooks }}
+    {{- $_ := set $annotations "helm.sh/hook" "post-install,post-upgrade" }}
+    {{- $_ := set $annotations "helm.sh/hook-weight" "1" }}
+    {{- $_ := set $annotations "helm.sh/hook-delete-policy" "before-hook-creation,hook-succeeded" }}
+  {{- end }}
+  {{- with $annotations := merge $annotations .Values.migrateDatabaseJob.jobAnnotations }}
   annotations:
-    "helm.sh/hook": post-install,post-upgrade
-    "helm.sh/hook-weight": "1"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- $annotations | toYaml | nindent 4 }}
+  {{- end }}
 spec:
   template:
     metadata:
@@ -45,6 +51,9 @@ spec:
         tier: airflow
         component: run-airflow-migrations
         release: {{ .Release.Name }}
+{{- with .Values.labels }}
+{{ toYaml . | indent 8 }}
+{{- end }}
       {{- if or .Values.airflowPodAnnotations .Values.migrateDatabaseJob.annotations }}
       annotations:
         {{- if .Values.airflowPodAnnotations }}
@@ -71,7 +80,7 @@ spec:
       {{- end }}
       containers:
         - name: run-airflow-migrations
-          image: {{ template "airflow_image" . }}
+          image: {{ template "airflow_image_for_migrations" . }}
           imagePullPolicy: {{ .Values.images.airflow.pullPolicy }}
           # Support running against 1.10.x and 2.x
           {{- if semverCompare ">=2.0.0" .Values.airflowVersion }}
@@ -89,6 +98,11 @@ spec:
               mountPath: {{ template "airflow_config_path" . }}
               subPath: airflow.cfg
               readOnly: true
+          resources:
+{{ toYaml .Values.migrateDatabaseJob.resources | indent 12 }}
+{{- if .Values.migrateDatabaseJob.extraContainers }}
+{{- toYaml .Values.migrateDatabaseJob.extraContainers | nindent 8 }}
+{{- end }}
       volumes:
         - name: config
           configMap:

@@ -27,14 +27,15 @@ import pytest
 
 from airflow import settings
 from airflow.config_templates.airflow_local_settings import DEFAULT_LOGGING_CONFIG
-from airflow.models import DAG, DagBag, TaskInstance
-from airflow.operators.dummy import DummyOperator
+from airflow.models import DagBag
 from airflow.utils import timezone
 from airflow.utils.log.logging_mixin import ExternalLoggingMixin
 from airflow.utils.session import create_session
-from airflow.utils.state import State
+from airflow.utils.state import DagRunState, TaskInstanceState
+from airflow.utils.types import DagRunType
 from airflow.www.app import create_app
 from tests.test_utils.config import conf_vars
+from tests.test_utils.db import clear_db_dags, clear_db_runs
 from tests.test_utils.decorators import dont_initialize_flask_app_submodules
 from tests.test_utils.www import client_with_login
 
@@ -52,7 +53,7 @@ def backup_modules():
 
 
 @pytest.fixture(scope="module")
-def log_app(backup_modules):  # pylint: disable=unused-argument
+def log_app(backup_modules):
     @dont_initialize_flask_app_submodules(
         skip_all_except=["init_appbuilder", "init_jinja_globals", "init_appbuilder_views"]
     )
@@ -61,7 +62,7 @@ def log_app(backup_modules):  # pylint: disable=unused-argument
         app = create_app(testing=True)
         app.config["WTF_CSRF_ENABLED"] = False
         settings.configure_orm()
-        security_manager = app.appbuilder.sm  # pylint: disable=no-member
+        security_manager = app.appbuilder.sm
         if not security_manager.find_user(username='test'):
             security_manager.add_user(
                 username='test',
@@ -102,46 +103,58 @@ def reset_modules_after_every_test(backup_modules):
 
 
 @pytest.fixture(autouse=True)
-def dags(log_app):
-    dag = DAG(DAG_ID, start_date=DEFAULT_DATE)
-    dag_removed = DAG(DAG_ID_REMOVED, start_date=DEFAULT_DATE)
+def dags(log_app, create_dummy_dag, session):
+    dag, _ = create_dummy_dag(
+        dag_id=DAG_ID,
+        task_id=TASK_ID,
+        start_date=DEFAULT_DATE,
+        with_dagrun_type=None,
+        session=session,
+    )
+    dag_removed, _ = create_dummy_dag(
+        dag_id=DAG_ID_REMOVED,
+        task_id=TASK_ID,
+        start_date=DEFAULT_DATE,
+        with_dagrun_type=None,
+        session=session,
+    )
 
     bag = DagBag(include_examples=False)
     bag.bag_dag(dag=dag, root_dag=dag)
     bag.bag_dag(dag=dag_removed, root_dag=dag_removed)
-
-    # Since we don't want to store the code for the DAG defined in this file
-    with unittest.mock.patch.object(settings, "STORE_DAG_CODE", False):
-        dag.sync_to_db()
-        dag_removed.sync_to_db()
-        bag.sync_to_db()
-
+    bag.sync_to_db(session=session)
     log_app.dag_bag = bag
-    return dag, dag_removed
+
+    yield dag, dag_removed
+
+    clear_db_dags()
 
 
 @pytest.fixture(autouse=True)
-def tis(dags):
+def tis(dags, session):
     dag, dag_removed = dags
-    ti = TaskInstance(
-        task=DummyOperator(task_id=TASK_ID, dag=dag),
+    dagrun = dag.create_dagrun(
+        run_type=DagRunType.SCHEDULED,
         execution_date=DEFAULT_DATE,
+        start_date=DEFAULT_DATE,
+        state=DagRunState.RUNNING,
+        session=session,
     )
+    (ti,) = dagrun.task_instances
     ti.try_number = 1
-    ti_removed_dag = TaskInstance(
-        task=DummyOperator(task_id=TASK_ID, dag=dag_removed),
+    dagrun_removed = dag_removed.create_dagrun(
+        run_type=DagRunType.SCHEDULED,
         execution_date=DEFAULT_DATE,
+        start_date=DEFAULT_DATE,
+        state=DagRunState.RUNNING,
+        session=session,
     )
+    (ti_removed_dag,) = dagrun_removed.task_instances
     ti_removed_dag.try_number = 1
-
-    with create_session() as session:
-        session.merge(ti)
-        session.merge(ti_removed_dag)
 
     yield ti, ti_removed_dag
 
-    with create_session() as session:
-        session.query(TaskInstance).delete()
+    clear_db_runs()
 
 
 @pytest.fixture()
@@ -152,13 +165,13 @@ def log_admin_client(log_app):
 @pytest.mark.parametrize(
     "state, try_number, num_logs",
     [
-        (State.NONE, 0, 0),
-        (State.UP_FOR_RETRY, 2, 2),
-        (State.UP_FOR_RESCHEDULE, 0, 1),
-        (State.UP_FOR_RESCHEDULE, 1, 2),
-        (State.RUNNING, 1, 1),
-        (State.SUCCESS, 1, 1),
-        (State.FAILED, 3, 3),
+        (None, 0, 0),
+        (TaskInstanceState.UP_FOR_RETRY, 2, 2),
+        (TaskInstanceState.UP_FOR_RESCHEDULE, 0, 1),
+        (TaskInstanceState.UP_FOR_RESCHEDULE, 1, 2),
+        (TaskInstanceState.RUNNING, 1, 1),
+        (TaskInstanceState.SUCCESS, 1, 1),
+        (TaskInstanceState.FAILED, 3, 3),
     ],
     ids=[
         "none",
@@ -379,17 +392,25 @@ def test_redirect_to_external_log_with_local_log_handler(log_admin_client, task_
     assert 'http://localhost/home' == response.headers['Location']
 
 
-class ExternalHandler(ExternalLoggingMixin):
+class _ExternalHandler(ExternalLoggingMixin):
     EXTERNAL_URL = 'http://external-service.com'
 
-    def get_external_log_url(self, *args, **kwargs):
+    @property
+    def log_name(self) -> str:
+        return 'ExternalLog'
+
+    def get_external_log_url(self, *args, **kwargs) -> str:
         return self.EXTERNAL_URL
+
+    @property
+    def supports_external_link(self) -> bool:
+        return True
 
 
 @unittest.mock.patch(
     'airflow.utils.log.log_reader.TaskLogReader.log_handler',
     new_callable=unittest.mock.PropertyMock,
-    return_value=ExternalHandler(),
+    return_value=_ExternalHandler(),
 )
 def test_redirect_to_external_log_with_external_log_handler(_, log_admin_client):
     url_template = "redirect_to_external_log?dag_id={}&task_id={}&execution_date={}&try_number={}"
@@ -402,4 +423,4 @@ def test_redirect_to_external_log_with_external_log_handler(_, log_admin_client)
     )
     response = log_admin_client.get(url)
     assert 302 == response.status_code
-    assert ExternalHandler.EXTERNAL_URL == response.headers['Location']
+    assert _ExternalHandler.EXTERNAL_URL == response.headers['Location']

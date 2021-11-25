@@ -25,10 +25,10 @@ from datetime import datetime, timedelta
 from unittest import mock
 
 # leave this it is used by the test worker
-import celery.contrib.testing.tasks  # noqa: F401 pylint: disable=unused-import
+import celery.contrib.testing.tasks  # noqa: F401
 import pytest
 from celery import Celery
-from celery.backends.base import BaseBackend, BaseKeyValueStoreBackend  # noqa
+from celery.backends.base import BaseBackend, BaseKeyValueStoreBackend
 from celery.backends.database import DatabaseBackend
 from celery.contrib.testing.worker import start_worker
 from celery.result import AsyncResult
@@ -126,14 +126,12 @@ class TestCeleryExecutor(unittest.TestCase):
                 task_tuples_to_send = [
                     (
                         ('success', 'fake_simple_ti', execute_date, 0),
-                        None,
                         success_command,
                         celery_executor.celery_configuration['task_default_queue'],
                         celery_executor.execute_command,
                     ),
                     (
                         ('fail', 'fake_simple_ti', execute_date, 0),
-                        None,
                         fail_command,
                         celery_executor.celery_configuration['task_default_queue'],
                         celery_executor.execute_command,
@@ -141,8 +139,8 @@ class TestCeleryExecutor(unittest.TestCase):
                 ]
 
                 # "Enqueue" them. We don't have a real SimpleTaskInstance, so directly edit the dict
-                for (key, simple_ti, command, queue, task) in task_tuples_to_send:  # pylint: disable=W0612
-                    executor.queued_tasks[key] = (command, 1, queue, simple_ti)
+                for (key, command, queue, task) in task_tuples_to_send:
+                    executor.queued_tasks[key] = (command, 1, queue, None)
                     executor.task_publish_retries[key] = 1
 
                 executor._process_tasks(task_tuples_to_send)
@@ -186,7 +184,7 @@ class TestCeleryExecutor(unittest.TestCase):
                 'command',
                 1,
                 None,
-                SimpleTaskInstance(ti=TaskInstance(task=task, execution_date=datetime.now())),
+                SimpleTaskInstance(ti=TaskInstance(task=task, run_id=None)),
             )
             key = ('fail', 'fake_simple_ti', when, 0)
             executor.queued_tasks[key] = value_tuple
@@ -219,7 +217,7 @@ class TestCeleryExecutor(unittest.TestCase):
                 'command',
                 1,
                 None,
-                SimpleTaskInstance(ti=TaskInstance(task=task, execution_date=datetime.now())),
+                SimpleTaskInstance(ti=TaskInstance(task=task, run_id=None)),
             )
             key = ('fail', 'fake_simple_ti', when, 0)
             executor.queued_tasks[key] = value_tuple
@@ -289,7 +287,12 @@ class TestCeleryExecutor(unittest.TestCase):
         # Check that we validate _on the receiving_ side, not just sending side
         with mock.patch(
             'airflow.executors.celery_executor._execute_in_subprocess'
-        ) as mock_subproc, mock.patch('airflow.executors.celery_executor._execute_in_fork') as mock_fork:
+        ) as mock_subproc, mock.patch(
+            'airflow.executors.celery_executor._execute_in_fork'
+        ) as mock_fork, mock.patch(
+            "celery.app.task.Task.request"
+        ) as mock_task:
+            mock_task.id = "abcdef-124215-abcdef"
             if expected_exception:
                 with pytest.raises(expected_exception):
                     celery_executor.execute_command(command)
@@ -298,17 +301,18 @@ class TestCeleryExecutor(unittest.TestCase):
             else:
                 celery_executor.execute_command(command)
                 # One of these should be called.
-                assert mock_subproc.call_args == ((command,),) or mock_fork.call_args == ((command,),)
+                assert mock_subproc.call_args == (
+                    (command, "abcdef-124215-abcdef"),
+                ) or mock_fork.call_args == ((command, "abcdef-124215-abcdef"),)
 
     @pytest.mark.backend("mysql", "postgres")
     def test_try_adopt_task_instances_none(self):
-        date = datetime.utcnow()
         start_date = datetime.utcnow() - timedelta(days=2)
 
         with DAG("test_try_adopt_task_instances_none"):
             task_1 = BaseOperator(task_id="task_1", start_date=start_date)
 
-        key1 = TaskInstance(task=task_1, execution_date=date)
+        key1 = TaskInstance(task=task_1, run_id=None)
         tis = [key1]
         executor = celery_executor.CeleryExecutor()
 
@@ -316,7 +320,6 @@ class TestCeleryExecutor(unittest.TestCase):
 
     @pytest.mark.backend("mysql", "postgres")
     def test_try_adopt_task_instances(self):
-        exec_date = timezone.utcnow() - timedelta(minutes=2)
         start_date = timezone.utcnow() - timedelta(days=2)
         queued_dttm = timezone.utcnow() - timedelta(minutes=1)
 
@@ -326,12 +329,14 @@ class TestCeleryExecutor(unittest.TestCase):
             task_1 = BaseOperator(task_id="task_1", start_date=start_date)
             task_2 = BaseOperator(task_id="task_2", start_date=start_date)
 
-        ti1 = TaskInstance(task=task_1, execution_date=exec_date)
+        ti1 = TaskInstance(task=task_1, run_id=None)
         ti1.external_executor_id = '231'
         ti1.queued_dttm = queued_dttm
-        ti2 = TaskInstance(task=task_2, execution_date=exec_date)
+        ti1.state = State.QUEUED
+        ti2 = TaskInstance(task=task_2, run_id=None)
         ti2.external_executor_id = '232'
         ti2.queued_dttm = queued_dttm
+        ti2.state = State.QUEUED
 
         tis = [ti1, ti2]
         executor = celery_executor.CeleryExecutor()
@@ -341,8 +346,8 @@ class TestCeleryExecutor(unittest.TestCase):
 
         not_adopted_tis = executor.try_adopt_task_instances(tis)
 
-        key_1 = TaskInstanceKey(dag.dag_id, task_1.task_id, exec_date, try_number)
-        key_2 = TaskInstanceKey(dag.dag_id, task_2.task_id, exec_date, try_number)
+        key_1 = TaskInstanceKey(dag.dag_id, task_1.task_id, None, try_number)
+        key_2 = TaskInstanceKey(dag.dag_id, task_2.task_id, None, try_number)
         assert executor.running == {key_1, key_2}
         assert dict(executor.adopted_task_timeouts) == {
             key_1: queued_dttm + executor.task_adoption_timeout,
@@ -353,7 +358,6 @@ class TestCeleryExecutor(unittest.TestCase):
 
     @pytest.mark.backend("mysql", "postgres")
     def test_check_for_stalled_adopted_tasks(self):
-        exec_date = timezone.utcnow() - timedelta(minutes=40)
         start_date = timezone.utcnow() - timedelta(days=2)
         queued_dttm = timezone.utcnow() - timedelta(minutes=30)
 
@@ -363,19 +367,49 @@ class TestCeleryExecutor(unittest.TestCase):
             task_1 = BaseOperator(task_id="task_1", start_date=start_date)
             task_2 = BaseOperator(task_id="task_2", start_date=start_date)
 
-        key_1 = TaskInstanceKey(dag.dag_id, task_1.task_id, exec_date, try_number)
-        key_2 = TaskInstanceKey(dag.dag_id, task_2.task_id, exec_date, try_number)
+        key_1 = TaskInstanceKey(dag.dag_id, task_1.task_id, "runid", try_number)
+        key_2 = TaskInstanceKey(dag.dag_id, task_2.task_id, "runid", try_number)
 
         executor = celery_executor.CeleryExecutor()
         executor.adopted_task_timeouts = {
             key_1: queued_dttm + executor.task_adoption_timeout,
             key_2: queued_dttm + executor.task_adoption_timeout,
         }
+        executor.running = {key_1, key_2}
         executor.tasks = {key_1: AsyncResult("231"), key_2: AsyncResult("232")}
         executor.sync()
         assert executor.event_buffer == {key_1: (State.FAILED, None), key_2: (State.FAILED, None)}
         assert executor.tasks == {}
+        assert executor.running == set()
         assert executor.adopted_task_timeouts == {}
+
+    @pytest.mark.backend("mysql", "postgres")
+    def test_check_for_stalled_adopted_tasks_goes_in_ordered_fashion(self):
+        start_date = timezone.utcnow() - timedelta(days=2)
+        queued_dttm = timezone.utcnow() - timedelta(minutes=30)
+        queued_dttm_2 = timezone.utcnow() - timedelta(minutes=4)
+
+        try_number = 1
+
+        with DAG("test_check_for_stalled_adopted_tasks") as dag:
+            task_1 = BaseOperator(task_id="task_1", start_date=start_date)
+            task_2 = BaseOperator(task_id="task_2", start_date=start_date)
+
+        key_1 = TaskInstanceKey(dag.dag_id, task_1.task_id, "runid", try_number)
+        key_2 = TaskInstanceKey(dag.dag_id, task_2.task_id, "runid", try_number)
+
+        executor = celery_executor.CeleryExecutor()
+        executor.adopted_task_timeouts = {
+            key_2: queued_dttm_2 + executor.task_adoption_timeout,
+            key_1: queued_dttm + executor.task_adoption_timeout,
+        }
+        executor.running = {key_1, key_2}
+        executor.tasks = {key_1: AsyncResult("231"), key_2: AsyncResult("232")}
+        executor.sync()
+        assert executor.event_buffer == {key_1: (State.FAILED, None)}
+        assert executor.tasks == {key_2: AsyncResult('232')}
+        assert executor.running == {key_2}
+        assert executor.adopted_task_timeouts == {key_2: queued_dttm_2 + executor.task_adoption_timeout}
 
 
 def test_operation_timeout_config():
@@ -413,9 +447,9 @@ class TestBulkStateFetcher(unittest.TestCase):
     def test_should_support_kv_backend(self, mock_mget):
         with _prepare_app():
             mock_backend = BaseKeyValueStoreBackend(app=celery_executor.app)
-            with mock.patch.object(celery_executor.app, 'backend', mock_backend), self.assertLogs(
-                "airflow.executors.celery_executor.BulkStateFetcher", level="DEBUG"
-            ) as cm:
+            with mock.patch(
+                'airflow.executors.celery_executor.Celery.backend', mock_backend
+            ), self.assertLogs("airflow.executors.celery_executor.BulkStateFetcher", level="DEBUG") as cm:
                 fetcher = BulkStateFetcher()
                 result = fetcher.get_many(
                     [
@@ -442,10 +476,10 @@ class TestBulkStateFetcher(unittest.TestCase):
         with _prepare_app():
             mock_backend = DatabaseBackend(app=celery_executor.app, url="sqlite3://")
 
-            with mock.patch.object(celery_executor.app, 'backend', mock_backend), self.assertLogs(
-                "airflow.executors.celery_executor.BulkStateFetcher", level="DEBUG"
-            ) as cm:
-                mock_session = mock_backend.ResultSession.return_value  # pylint: disable=no-member
+            with mock.patch(
+                'airflow.executors.celery_executor.Celery.backend', mock_backend
+            ), self.assertLogs("airflow.executors.celery_executor.BulkStateFetcher", level="DEBUG") as cm:
+                mock_session = mock_backend.ResultSession.return_value
                 mock_session.query.return_value.filter.return_value.all.return_value = [
                     mock.MagicMock(**{"to_dict.return_value": {"status": "SUCCESS", "task_id": "123"}})
                 ]
@@ -470,9 +504,9 @@ class TestBulkStateFetcher(unittest.TestCase):
         with _prepare_app():
             mock_backend = mock.MagicMock(autospec=BaseBackend)
 
-            with mock.patch.object(celery_executor.app, 'backend', mock_backend), self.assertLogs(
-                "airflow.executors.celery_executor.BulkStateFetcher", level="DEBUG"
-            ) as cm:
+            with mock.patch(
+                'airflow.executors.celery_executor.Celery.backend', mock_backend
+            ), self.assertLogs("airflow.executors.celery_executor.BulkStateFetcher", level="DEBUG") as cm:
                 fetcher = BulkStateFetcher(1)
                 result = fetcher.get_many(
                     [
@@ -523,14 +557,14 @@ def register_signals():
 
 
 @pytest.mark.quarantined
-def test_send_tasks_to_celery_hang(register_signals):  # pylint: disable=unused-argument
+def test_send_tasks_to_celery_hang(register_signals):
     """
     Test that celery_executor does not hang after many runs.
     """
     executor = celery_executor.CeleryExecutor()
 
     task = MockTask()
-    task_tuples_to_send = [(None, None, None, None, task) for _ in range(26)]
+    task_tuples_to_send = [(None, None, None, task) for _ in range(26)]
 
     for _ in range(500):
         # This loop can hang on Linux if celery_executor does something wrong with

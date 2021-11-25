@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""This module contains operator to move data from MySQL to Druid."""
+"""This module contains an operator to move data from MySQL to Hive."""
 
 from collections import OrderedDict
 from tempfile import NamedTemporaryFile
@@ -81,7 +81,7 @@ class MySqlToHiveOperator(BaseOperator):
     template_ext = ('.sql',)
     ui_color = '#a0e08c'
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(
         self,
         *,
         sql: str,

@@ -18,6 +18,7 @@
 import inspect
 import os
 import pickle
+import shutil
 import sys
 import types
 import warnings
@@ -62,7 +63,7 @@ def task(python_callable: Optional[Callable] = None, multiple_outputs: Optional[
     """
     # To maintain backwards compatibility, we import the task object into this file
     # This prevents breakages in dags that use `from airflow.operators.python import task`
-    from airflow.decorators.python import python_task  # noqa # pylint: disable=unused-import
+    from airflow.decorators.python import python_task
 
     warnings.warn(
         """airflow.operators.python.task is deprecated. Please use the following instead
@@ -84,6 +85,28 @@ class PythonOperator(BaseOperator):
         For more information on how to use this operator, take a look at the guide:
         :ref:`howto/operator:PythonOperator`
 
+    When running your callable, Airflow will pass a set of keyword arguments that can be used in your
+    function. This set of kwargs correspond exactly to what you can use in your jinja templates.
+    For this to work, you need to define ``**kwargs`` in your function header, or you can add directly the
+    keyword arguments you would like to get - for example with the below code your callable will get
+    the values of ``ti`` and ``next_ds`` context variables.
+
+    With explicit arguments:
+
+    .. code-block:: python
+
+       def my_python_callable(ti, next_ds):
+           pass
+
+    With kwargs:
+
+    .. code-block:: python
+
+       def my_python_callable(**kwargs):
+           ti = kwargs["ti"]
+           next_ds = kwargs["next_ds"]
+
+
     :param python_callable: A reference to an object that is callable
     :type python_callable: python callable
     :param op_kwargs: a dictionary of keyword arguments that will get unpacked
@@ -100,6 +123,11 @@ class PythonOperator(BaseOperator):
     :param templates_exts: a list of file extensions to resolve while
         processing templated fields, for examples ``['.sql', '.hql']``
     :type templates_exts: list[str]
+    :param show_return_value_in_logs: a bool value whether to show return_value
+        logs. Defaults to True, which allows return value log output.
+        It can be set to False to prevent log output of return value when you return huge data
+        such as transmission a large amount of XCom to TaskAPI.
+    :type show_return_value_in_logs: bool
     """
 
     template_fields = ('templates_dict', 'op_args', 'op_kwargs')
@@ -122,6 +150,7 @@ class PythonOperator(BaseOperator):
         op_kwargs: Optional[Dict] = None,
         templates_dict: Optional[Dict] = None,
         templates_exts: Optional[List[str]] = None,
+        show_return_value_in_logs: bool = True,
         **kwargs,
     ) -> None:
         if kwargs.get("provide_context"):
@@ -140,6 +169,7 @@ class PythonOperator(BaseOperator):
         self.templates_dict = templates_dict
         if templates_exts:
             self.template_ext = templates_exts
+        self.show_return_value_in_logs = show_return_value_in_logs
 
     def execute(self, context: Dict):
         context.update(self.op_kwargs)
@@ -148,7 +178,11 @@ class PythonOperator(BaseOperator):
         self.op_kwargs = determine_kwargs(self.python_callable, self.op_args, context)
 
         return_value = self.execute_callable()
-        self.log.info("Done. Returned value was: %s", return_value)
+        if self.show_return_value_in_logs:
+            self.log.info("Done. Returned value was: %s", return_value)
+        else:
+            self.log.info("Done. Returned value not shown")
+
         return return_value
 
     def execute_callable(self):
@@ -177,6 +211,19 @@ class BranchPythonOperator(PythonOperator, SkipMixin):
 
     def execute(self, context: Dict):
         branch = super().execute(context)
+        # TODO: The logic should be moved to SkipMixin to be available to all branch operators.
+        if isinstance(branch, str):
+            branches = {branch}
+        elif isinstance(branch, list):
+            branches = set(branch)
+        else:
+            raise AirflowException("Branch callable must return either a task ID or a list of IDs")
+        valid_task_ids = set(context["dag"].task_ids)
+        invalid_task_ids = branches - valid_task_ids
+        if invalid_task_ids:
+            raise AirflowException(
+                f"Branch callable must return valid task_ids. Invalid tasks found: {invalid_task_ids}"
+            )
         self.skip_all_except(context['ti'], branch)
         return branch
 
@@ -267,12 +314,12 @@ class PythonVirtualenvOperator(PythonOperator):
     """
 
     BASE_SERIALIZABLE_CONTEXT_KEYS = {
+        'ds',
         'ds_nodash',
         'inlets',
         'next_ds',
         'next_ds_nodash',
         'outlets',
-        'params',
         'prev_ds',
         'prev_ds_nodash',
         'run_id',
@@ -287,15 +334,20 @@ class PythonVirtualenvOperator(PythonOperator):
         'yesterday_ds_nodash',
     }
     PENDULUM_SERIALIZABLE_CONTEXT_KEYS = {
+        'data_interval_end',
+        'data_interval_start',
         'execution_date',
+        'logical_date',
         'next_execution_date',
+        'prev_data_interval_end_success',
+        'prev_data_interval_start_success',
         'prev_execution_date',
         'prev_execution_date_success',
         'prev_start_date_success',
     }
-    AIRFLOW_SERIALIZABLE_CONTEXT_KEYS = {'macros', 'conf', 'dag', 'dag_run', 'task'}
+    AIRFLOW_SERIALIZABLE_CONTEXT_KEYS = {'macros', 'conf', 'dag', 'dag_run', 'task', 'params'}
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(
         self,
         *,
         python_callable: Callable,
@@ -325,6 +377,8 @@ class PythonVirtualenvOperator(PythonOperator):
                 "Passing op_args or op_kwargs is not supported across different Python "
                 "major versions for PythonVirtualenvOperator. Please use string_args."
             )
+        if not shutil.which("virtualenv"):
+            raise AirflowException('PythonVirtualenvOperator requires virtualenv, please install it.')
         super().__init__(
             python_callable=python_callable,
             op_args=op_args,
@@ -338,8 +392,11 @@ class PythonVirtualenvOperator(PythonOperator):
         self.python_version = python_version
         self.use_dill = use_dill
         self.system_site_packages = system_site_packages
-        if not self.system_site_packages and self.use_dill and 'dill' not in self.requirements:
-            self.requirements.append('dill')
+        if not self.system_site_packages:
+            if 'lazy-object-proxy' not in self.requirements:
+                self.requirements.append('lazy-object-proxy')
+            if self.use_dill and 'dill' not in self.requirements:
+                self.requirements.append('dill')
         self.pickling_library = dill if self.use_dill else pickle
 
     def execute(self, context: Dict):

@@ -22,7 +22,7 @@ Committers and PMC's
 
 This document assumes that you know how Airflow's community work, but you would like to learn more about the rules by which we add new members.
 
-Before reading this document, you should be familiar with `Contributor's guide <https://github.com/apache/airflow/blob/master/CONTRIBUTING.rst>`__.
+Before reading this document, you should be familiar with `Contributor's guide <https://github.com/apache/airflow/blob/main/CONTRIBUTING.rst>`__.
 
 Guidelines to become an Airflow Committer
 ------------------------------------------
@@ -49,7 +49,7 @@ General prerequisites that we look for in all candidates:
 2.  Visibility on discussions on the dev mailing list, Slack channels or GitHub issues/discussions
 3.  Contributions to community health and project's sustainability for the long-term
 4.  Understands contributor/committer guidelines:
-    `Contributors' Guide <https://github.com/apache/airflow/blob/master/CONTRIBUTING.rst>`__
+    `Contributors' Guide <https://github.com/apache/airflow/blob/main/CONTRIBUTING.rst>`__
 
 
 Code contribution
@@ -158,7 +158,7 @@ can become the Mentor and guide the proposed candidates on how they can become a
 
     If the committee does not have enough information, requires more time, or requires more evidence of
     candidate's eligibility, a mentor, who is not the proposer, is selected to help mentor the candidate
-    The mentor should try to remain impartial -- his/her goal is to provide the missing evidence and to
+    The mentor should try to remain impartial -- their goal is to provide the missing evidence and to
     try to coach/mentor the candidate to success.
 
     In order to re-raise a candidate vote, both Proposer and Mentor must be in favor. Again,

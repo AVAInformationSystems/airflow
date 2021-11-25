@@ -16,13 +16,15 @@
 # specific language governing permissions and limitations
 # under the License.
 import os
+from collections import Callable
 from unittest import mock
 
 import pytest
 
 from airflow.configuration import initialize_config
 from airflow.plugins_manager import AirflowPlugin, EntryPointSource
-from airflow.www.views import get_safe_url, truncate_task_duration
+from airflow.www import views
+from airflow.www.views import get_key_paths, get_safe_url, get_value_from_path, truncate_task_duration
 from tests.test_utils.config import conf_vars
 from tests.test_utils.mock_plugins import mock_plugin_manager
 from tests.test_utils.www import check_content_in_response, check_content_not_in_response
@@ -52,6 +54,8 @@ def test_configuration_expose_config(admin_client):
 
 
 def test_redoc_should_render_template(capture_templates, admin_client):
+    from airflow.utils.docs import get_docs_url
+
     with capture_templates() as templates:
         resp = admin_client.get('redoc')
         check_content_in_response('Redoc', resp)
@@ -61,6 +65,7 @@ def test_redoc_should_render_template(capture_templates, admin_client):
     assert templates[0].local_context == {
         'openapi_spec_url': '/api/v1/openapi.yaml',
         'rest_api_enabled': True,
+        'get_docs_url': get_docs_url,
     }
 
 
@@ -93,6 +98,23 @@ def test_plugin_endpoint_should_not_be_unauthenticated(app):
     check_content_in_response("Sign In - Airflow", resp)
 
 
+def test_should_list_providers_on_page_with_details(admin_client):
+    resp = admin_client.get('/provider')
+    beam_href = "<a href=\"https://airflow.apache.org/docs/apache-airflow-providers-apache-beam/"
+    beam_text = "apache-airflow-providers-apache-beam</a>"
+    beam_description = "<a href=\"https://beam.apache.org/\">Apache Beam</a>"
+    check_content_in_response(beam_href, resp)
+    check_content_in_response(beam_text, resp)
+    check_content_in_response(beam_description, resp)
+    check_content_in_response("Providers", resp)
+
+
+def test_endpoint_should_not_be_unauthenticated(app):
+    resp = app.test_client().get('/provider', follow_redirects=True)
+    check_content_not_in_response("Providers", resp)
+    check_content_in_response("Sign In - Airflow", resp)
+
+
 @pytest.mark.parametrize(
     "url, content",
     [
@@ -112,6 +134,23 @@ def test_task_start_date_filter(admin_client, url, content):
     # We aren't checking the logic of the date filter itself (that is built
     # in to FAB) but simply that our UTC conversion was run - i.e. it
     # doesn't blow up!
+    check_content_in_response(content, resp)
+
+
+@pytest.mark.parametrize(
+    "url, content",
+    [
+        (
+            "/taskinstance/list/?_flt_3_dag_id=test_dag",
+            "List Task Instance",
+        )
+    ],
+    ids=["instance"],
+)
+def test_task_dag_id_equals_filter(admin_client, url, content):
+    resp = admin_client.get(url)
+    # We aren't checking the logic of the dag_id filter itself (that is built
+    # in to FAB) but simply that dag_id filter was run
     check_content_in_response(content, resp)
 
 
@@ -168,7 +207,7 @@ def test_mark_task_instance_state(test_app):
     Test that _mark_task_instance_state() does all three things:
     - Marks the given TaskInstance as SUCCESS;
     - Clears downstream TaskInstances in FAILED/UPSTREAM_FAILED state;
-    - Set DagRun to RUNNING.
+    - Set DagRun to QUEUED.
     """
     from airflow.models import DAG, DagBag, TaskInstance
     from airflow.operators.dummy import DummyOperator
@@ -223,7 +262,6 @@ def test_mark_task_instance_state(test_app):
             task_id=task_1.task_id,
             origin="",
             execution_date=start_date.isoformat(),
-            confirmed=True,
             upstream=False,
             downstream=False,
             future=False,
@@ -242,5 +280,56 @@ def test_mark_task_instance_state(test_app):
         # task_5 remains as SKIPPED
         assert get_task_instance(session, task_5).state == State.SKIPPED
         dagrun.refresh_from_db(session=session)
-        # dagrun should be set to RUNNING
-        assert dagrun.get_state() == State.RUNNING
+        # dagrun should be set to QUEUED
+        assert dagrun.get_state() == State.QUEUED
+
+
+TEST_CONTENT_DICT = {"key1": {"key2": "val2", "key3": "val3", "key4": {"key5": "val5"}}}
+
+
+@pytest.mark.parametrize(
+    "test_content_dict, expected_paths", [(TEST_CONTENT_DICT, ("key1.key2", "key1.key3", "key1.key4.key5"))]
+)
+def test_generate_key_paths(test_content_dict, expected_paths):
+    for key_path in get_key_paths(test_content_dict):
+        assert key_path in expected_paths
+
+
+@pytest.mark.parametrize(
+    "test_content_dict, test_key_path, expected_value",
+    [
+        (TEST_CONTENT_DICT, "key1.key2", "val2"),
+        (TEST_CONTENT_DICT, "key1.key3", "val3"),
+        (TEST_CONTENT_DICT, "key1.key4.key5", "val5"),
+    ],
+)
+def test_get_value_from_path(test_content_dict, test_key_path, expected_value):
+    assert expected_value == get_value_from_path(test_key_path, test_content_dict)
+
+
+def assert_decorator_used(cls: type, fn_name: str, decorator: Callable):
+    fn = getattr(cls, fn_name)
+    code = decorator(None).__code__
+    while fn is not None:
+        if fn.__code__ is code:
+            return
+        if not hasattr(fn, '__wrapped__'):
+            break
+        fn = getattr(fn, '__wrapped__')
+    assert False, f'{cls.__name__}.{fn_name} was not decorated with @{decorator.__name__}'
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [
+        views.TaskInstanceModelView,
+        views.DagRunModelView,
+    ],
+)
+def test_dag_edit_privileged_requires_view_has_action_decorators(cls: type):
+    action_funcs = {func for func in dir(cls) if callable(getattr(cls, func)) and func.startswith("action_")}
+
+    # We remove action_post as this is a standard SQLAlchemy function no enable other action functions.
+    action_funcs = action_funcs - {"action_post"}
+    for action_function in action_funcs:
+        assert_decorator_used(cls, action_function, views.action_has_dag_edit_access)

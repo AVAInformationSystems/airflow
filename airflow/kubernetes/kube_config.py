@@ -20,14 +20,14 @@ from airflow.configuration import conf
 from airflow.settings import AIRFLOW_HOME
 
 
-class KubeConfig:  # pylint: disable=too-many-instance-attributes
+class KubeConfig:
     """Configuration for Kubernetes"""
 
     core_section = 'core'
     kubernetes_section = 'kubernetes'
     logging_section = 'logging'
 
-    def __init__(self):  # pylint: disable=too-many-statements
+    def __init__(self):
         configuration_dict = conf.as_dict(display_sensitive=True)
         self.core_configuration = configuration_dict[self.core_section]
         self.airflow_home = AIRFLOW_HOME
@@ -45,7 +45,10 @@ class KubeConfig:  # pylint: disable=too-many-instance-attributes
 
         self.worker_container_repository = conf.get(self.kubernetes_section, 'worker_container_repository')
         self.worker_container_tag = conf.get(self.kubernetes_section, 'worker_container_tag')
-        self.kube_image = f'{self.worker_container_repository}:{self.worker_container_tag}'
+        if self.worker_container_repository and self.worker_container_tag:
+            self.kube_image = f'{self.worker_container_repository}:{self.worker_container_tag}'
+        else:
+            self.kube_image = None
 
         # The Kubernetes Namespace in which the Scheduler and Webserver reside. Note
         # that if your
@@ -65,6 +68,9 @@ class KubeConfig:  # pylint: disable=too-many-instance-attributes
         )
         self.worker_pods_pending_timeout_batch_size = conf.getint(
             self.kubernetes_section, 'worker_pods_pending_timeout_batch_size'
+        )
+        self.worker_pods_queued_check_interval = conf.getint(
+            self.kubernetes_section, 'worker_pods_queued_check_interval'
         )
 
         kube_client_request_args = conf.get(self.kubernetes_section, 'kube_client_request_args')

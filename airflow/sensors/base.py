@@ -39,7 +39,7 @@ from airflow.utils import timezone
 # We need to keep the import here because GCSToLocalFilesystemOperator released in
 # Google Provider before 3.0.0 imported apply_defaults from here.
 # See  https://github.com/apache/airflow/issues/16035
-from airflow.utils.decorators import apply_defaults  # pylint: disable=unused-import
+from airflow.utils.decorators import apply_defaults
 
 
 class BaseSensorOperator(BaseOperator, SkipMixin):
@@ -97,7 +97,7 @@ class BaseSensorOperator(BaseOperator, SkipMixin):
         self,
         *,
         poke_interval: float = 60,
-        timeout: float = 60 * 60 * 24 * 7,
+        timeout: float = conf.getfloat('sensors', 'default_timeout'),
         soft_fail: bool = False,
         mode: str = 'poke',
         exponential_backoff: bool = False,
@@ -122,13 +122,7 @@ class BaseSensorOperator(BaseOperator, SkipMixin):
             raise AirflowException("The timeout must be a non-negative number")
         if self.mode not in self.valid_modes:
             raise AirflowException(
-                "The mode must be one of {valid_modes},"
-                "'{d}.{t}'; received '{m}'.".format(
-                    valid_modes=self.valid_modes,
-                    d=self.dag.dag_id if self.dag else "",
-                    t=self.task_id,
-                    m=self.mode,
-                )
+                f"The mode must be one of {self.valid_modes},'{self.dag.dag_id if self.has_dag() else ''}.{self.task_id}'; received '{self.mode}'."
             )
 
     def poke(self, context: Dict) -> bool:
@@ -254,9 +248,7 @@ class BaseSensorOperator(BaseOperator, SkipMixin):
             min_backoff = int(self.poke_interval * (2 ** (try_number - 2)))
 
             run_hash = int(
-                hashlib.sha1(
-                    f"{self.dag_id}#{self.task_id}#{started_at}#{try_number}".encode("utf-8")
-                ).hexdigest(),
+                hashlib.sha1(f"{self.dag_id}#{self.task_id}#{started_at}#{try_number}".encode()).hexdigest(),
                 16,
             )
             modded_hash = min_backoff + run_hash % min_backoff

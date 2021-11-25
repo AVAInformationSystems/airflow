@@ -15,6 +15,8 @@
     specific language governing permissions and limitations
     under the License.
 
+.. _concepts:dags:
+
 DAGs
 ====
 
@@ -35,18 +37,20 @@ Declaring a DAG
 There are three ways to declare a DAG - either you can use a context manager,
 which will add the DAG to anything inside it implicitly::
 
-    with DAG("my_dag_name") as dag:
+    with DAG(
+        "my_dag_name", start_date=datetime(2021, 1, 1), schedule_interval="@daily", catchup=False
+    ) as dag:
         op = DummyOperator(task_id="task")
 
 Or, you can use a standard constructor, passing the dag into any
 operators you use::
 
-    my_dag = DAG("my_dag_name")
+    my_dag = DAG("my_dag_name", start_date=datetime(2021, 1, 1), schedule_interval="@daily", catchup=False)
     op = DummyOperator(task_id="task", dag=my_dag)
 
 Or, you can use the ``@dag`` decorator to :ref:`turn a function into a DAG generator <concepts:dag-decorator>`::
 
-    @dag(start_date=days_ago(2))
+    @dag(start_date=datetime(2021, 1, 1), schedule_interval="@daily", catchup=False)
     def generate_dag():
         op = DummyOperator(task_id="task")
 
@@ -87,7 +91,7 @@ And if you want to chain together dependencies, you can use ``chain``::
     chain(op1, op2, op3, op4)
 
     # You can also do it dynamically
-    chain([DummyOperator(task_id='op' + i) for i in range(1, 6)])
+    chain(*[DummyOperator(task_id='op' + i) for i in range(1, 6)])
 
 Chain can also do *pairwise* dependencies for lists the same size (this is different to the *cross dependencies* done by ``cross_downstream``!)::
 
@@ -148,13 +152,30 @@ The ``schedule_interval`` argument takes any value that is a valid `Crontab <htt
     with DAG("my_daily_dag", schedule_interval="0 * * * *"):
         ...
 
-Every time you run a DAG, you are creating a new instance of that DAG which Airflow calls a :doc:`DAG Run </dag-run>`. DAG Runs can run in parallel for the same DAG, and each has a defined ``execution_date``, which identifies the *logical* date and time it is running for - not the *actual* time when it was started.
+.. tip::
 
-As an example of why this is useful, consider writing a DAG that processes a daily set of experimental data. It's been rewritten, and you want to run it on the previous 3 months of data - no problem, since Airflow can *backfill* the DAG and run copies of it for every day in those previous 3 months, all at once.
+    For more information on ``schedule_interval`` values, see :doc:`DAG Run </dag-run>`.
 
-Those DAG Runs will all have been started on the same actual day, but their ``execution_date`` values will cover those last 3 months, and that's what all the tasks, operators and sensors inside the DAG look at when they run.
+    If ``schedule_interval`` is not enough to express the DAG's schedule, see :doc:`Timetables </howto/timetable>`.
 
-In much the same way a DAG instantiates into a DAG Run every time it's run, Tasks specified inside a DAG also instantiate into :ref:`Task Instances <concepts:task-instances>` along with it.
+Every time you run a DAG, you are creating a new instance of that DAG which
+Airflow calls a :doc:`DAG Run </dag-run>`. DAG Runs can run in parallel for the
+same DAG, and each has a defined data interval, which identifies the period of
+data the tasks should operate on.
+
+As an example of why this is useful, consider writing a DAG that processes a
+daily set of experimental data. It's been rewritten, and you want to run it on
+the previous 3 months of data---no problem, since Airflow can *backfill* the DAG
+and run copies of it for every day in those previous 3 months, all at once.
+
+Those DAG Runs will all have been started on the same actual day, but each DAG
+run will have one data interval covering a single day in that 3 month period,
+and that data interval is all the tasks, operators and sensors inside the DAG
+look at when they run.
+
+In much the same way a DAG instantiates into a DAG Run every time it's run,
+Tasks specified inside a DAG are also instantiated into
+:ref:`Task Instances <concepts:task-instances>` along with it.
 
 
 DAG Assignment
@@ -174,16 +195,19 @@ Otherwise, you must pass it into each Operator with ``dag=``.
 Default Arguments
 -----------------
 
-Often, many Operators inside a DAG need the same set of default arguments (such as their ``start_date``). Rather than having to specify this individually for every Operator, you can instead pass ``default_args`` to the DAG when you create it, and it will auto-apply them to any operator tied to it::
+Often, many Operators inside a DAG need the same set of default arguments (such as their ``retries``). Rather than having to specify this individually for every Operator, you can instead pass ``default_args`` to the DAG when you create it, and it will auto-apply them to any operator tied to it::
 
-    default_args = {
-        'start_date': datetime(2016, 1, 1),
-        'owner': 'airflow'
-    }
 
-    with DAG('my_dag', default_args=default_args) as dag:
-        op = DummyOperator(task_id='dummy')
-        print(op.owner)  # "airflow"
+
+    with DAG(
+        dag_id='my_dag',
+        start_date=datetime(2016, 1, 1),
+        schedule_interval='@daily',
+        catchup=False,
+        default_args={'retries': 2},
+    ) as dag:
+        op = BashOperator(task_id='dummy', bash_command='Hello World!')
+        print(op.retries)  # 2
 
 
 .. _concepts:dag-decorator:
@@ -277,7 +301,7 @@ As with the callable for ``BranchPythonOperator``, this method should return the
             """
             Run an extra branch on the first day of the month
             """
-            if context['execution_date'].day == 1:
+            if context['data_interval_start'].day == 1:
                 return ['daily_task_id', 'monthly_task_id']
             else:
                 return 'daily_task_id'
@@ -317,7 +341,7 @@ Depends On Past
 
 You can also say a task can only run if the *previous* run of the task in the previous DAG Run succeeded. To use this, you just need to set the ``depends_on_past`` argument on your Task to ``True``.
 
-Note that if you are running the DAG at the very start of its life - specifically, that the ``execution_date`` matches the ``start_date`` - then the Task will still run, as there is no previous run to depend on.
+Note that if you are running the DAG at the very start of its life---specifically, its first ever *automated* run---then the Task will still run, as there is no previous run to depend on.
 
 
 .. _concepts:trigger-rules:
@@ -335,9 +359,9 @@ However, this is just the default behaviour, and you can control it using the ``
 * ``one_failed``: At least one upstream task has failed (does not wait for all upstream tasks to be done)
 * ``one_success``: At least one upstream task has succeeded (does not wait for all upstream tasks to be done)
 * ``none_failed``: All upstream tasks have not ``failed`` or ``upstream_failed`` - that is, all upstream tasks have succeeded or been skipped
-* ``none_failed_or_skipped``: All upstream tasks have not ``failed`` or ``upstream_failed``, and at least one upstream task has succeeded.
+* ``none_failed_min_one_success``: All upstream tasks have not ``failed`` or ``upstream_failed``, and at least one upstream task has succeeded.
 * ``none_skipped``: No upstream task is in a ``skipped`` state - that is, all upstream tasks are in a ``success``, ``failed``, or ``upstream_failed`` state
-* ``dummy``: No dependencies at all, run this task at any time
+* ``always``: No dependencies at all, run this task at any time
 
 You can also combine this with the :ref:`concepts:depends-on-past` functionality if you wish.
 
@@ -382,7 +406,7 @@ You can also combine this with the :ref:`concepts:depends-on-past` functionality
 
     .. image:: /img/branch_without_trigger.png
 
-    By setting ``trigger_rule`` to ``none_failed_or_skipped`` in the ``join`` task, we can instead get the intended behaviour:
+    By setting ``trigger_rule`` to ``none_failed_min_one_success`` in the ``join`` task, we can instead get the intended behaviour:
 
     .. image:: /img/branch_with_trigger.png
 
@@ -397,7 +421,7 @@ For example, here is a DAG that uses a ``for`` loop to define some Tasks::
     with DAG("loop_example") as dag:
 
         first = DummyOperator(task_id="first")
-        last = DummyOperator( task_id="last")
+        last = DummyOperator(task_id="last")
 
         options = ["branch_a", "branch_b", "branch_c", "branch_d"]
         for option in options:
@@ -412,10 +436,10 @@ DAG Visualization
 
 If you want to see a visual representation of a DAG, you have two options:
 
-* You can load up the Airflow UI, navigate to your DAG, and select "Graph View"
+* You can load up the Airflow UI, navigate to your DAG, and select "Graph"
 * You can run ``airflow dags show``, which renders it out as an image file
 
-We generally recommend you use the Graph View, as it will also show you the state of all the :ref:`Task Instances <concepts:task-instances>` within any DAG Run you select.
+We generally recommend you use the Graph view, as it will also show you the state of all the :ref:`Task Instances <concepts:task-instances>` within any DAG Run you select.
 
 Of course, as you develop out your DAGs they are going to get increasingly complex, so we provide a few ways to modify these DAG views to make them easier to understand.
 
@@ -425,7 +449,7 @@ Of course, as you develop out your DAGs they are going to get increasingly compl
 TaskGroups
 ~~~~~~~~~~
 
-A TaskGroup can be used to organize tasks into hierarchical groups in Graph View. It is useful for creating repeating patterns and cutting down visual clutter.
+A TaskGroup can be used to organize tasks into hierarchical groups in Graph view. It is useful for creating repeating patterns and cutting down visual clutter.
 
 Unlike :ref:`concepts:subdags`, TaskGroups are purely a UI grouping concept. Tasks in TaskGroups live on the same original DAG, and honor all the DAG settings and pool configurations.
 
@@ -441,6 +465,21 @@ Dependency relationships can be applied across all tasks in a TaskGroup with the
 
     group1 >> task3
 
+TaskGroup also supports ``default_args`` like DAG, it will overwrite the ``default_args`` in DAG level::
+
+    with DAG(
+        dag_id='dag1',
+        start_date=datetime(2016, 1, 1),
+        schedule_interval="@daily",
+        catchup=False,
+        default_args={'retries': 1},
+    ):
+        with TaskGroup('group1', default_args={'retries': 3}):
+            task1 = DummyOperator(task_id='task1')
+            task2 = BashOperator(task_id='task2', bash_command='echo Hello World!', retries=2)
+            print(task1.retries) # 3
+            print(task2.retries) # 2
+
 If you want to see a more advanced use of TaskGroup, you can look at the ``example_task_group.py`` example DAG that comes with Airflow.
 
 .. note::
@@ -455,7 +494,7 @@ If you want to see a more advanced use of TaskGroup, you can look at the ``examp
 Edge Labels
 ~~~~~~~~~~~
 
-As well as grouping tasks into groups, you can also label the *dependency edges* between different tasks in the Graph View - this can be especially useful for branching areas of your DAG, so you can label the conditions under which certain branches might run.
+As well as grouping tasks into groups, you can also label the *dependency edges* between different tasks in the Graph view - this can be especially useful for branching areas of your DAG, so you can label the conditions under which certain branches might run.
 
 To add labels, you can use them directly inline with the ``>>`` and ``<<`` operators:
 
@@ -485,7 +524,7 @@ Here's an example DAG which illustrates labeling different branches:
 DAG & Task Documentation
 ------------------------
 
-It's possible to add documentation or notes to your DAGs & task objects that are visible in the web interface ("Graph View" & "Tree View" for DAGs, "Task Instance Details" for tasks).
+It's possible to add documentation or notes to your DAGs & task objects that are visible in the web interface ("Graph" & "Tree" for DAGs, "Task Instance Details" for tasks).
 
 There are a set of special task attributes that get rendered as rich content if defined:
 
@@ -509,7 +548,9 @@ This is especially useful if your tasks are built dynamically from configuration
     ### My great DAG
     """
 
-    dag = DAG("my_dag", default_args=default_args)
+    dag = DAG(
+        "my_dag", start_date=datetime(2021, 1, 1), schedule_interval="@daily", catchup=False
+    )
     dag.doc_md = __doc__
 
     t = BashOperator("foo", dag=dag)
@@ -601,7 +642,7 @@ in which one DAG can depend on another:
 - waiting - :class:`~airflow.sensors.external_task_sensor.ExternalTaskSensor`
 
 Additional difficulty is that one DAG could wait for or trigger several runs of the other DAG
-with different execution dates. The **Dag Dependencies** view
+with different data intervals. The **Dag Dependencies** view
 ``Menu -> Browse -> DAG Dependencies`` helps visualize dependencies between DAGs. The dependencies
 are calculated by the scheduler during DAG serialization and the webserver uses them to build
 the dependency graph.

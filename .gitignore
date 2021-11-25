@@ -204,8 +204,6 @@ log.txt*
 # Terraform variables
 *.tfvars
 
-Chart.lock
-
 # Chart dependencies
 **/charts/*.tgz
 
@@ -219,3 +217,6 @@ pip-wheel-metadata
 # Dev files
 /dev/packages.txt
 /dev/Dockerfile.pmc
+
+# Generated UI licenses
+licenses/LICENSES-ui.txt

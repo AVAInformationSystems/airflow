@@ -38,8 +38,8 @@ EXPECTED_JSON = {
         'rx': 5,
         'ry': 5,
         'clusterLabelPos': 'top',
+        'tooltip': '',
     },
-    'tooltip': '',
     'children': [
         {
             'id': 'group234',
@@ -50,8 +50,8 @@ EXPECTED_JSON = {
                 'rx': 5,
                 'ry': 5,
                 'clusterLabelPos': 'top',
+                'tooltip': '',
             },
-            'tooltip': '',
             'children': [
                 {
                     'id': 'group234.group34',
@@ -62,8 +62,8 @@ EXPECTED_JSON = {
                         'rx': 5,
                         'ry': 5,
                         'clusterLabelPos': 'top',
+                        'tooltip': '',
                     },
-                    'tooltip': '',
                     'children': [
                         {
                             'id': 'group234.group34.task3',
@@ -309,11 +309,9 @@ def test_build_task_group_with_task_decorator():
 
         tsk_1 >> group234 >> tsk_5
 
-    # pylint: disable=no-member
     assert tsk_1.operator in tsk_2.operator.upstream_list
     assert tsk_1.operator in tsk_3.operator.upstream_list
     assert tsk_5.operator in tsk_4.operator.downstream_list
-    # pylint: enable=no-member
 
     assert extract_node_id(task_group_to_dict(dag.task_group)) == {
         'id': None,
@@ -347,7 +345,7 @@ def test_build_task_group_with_task_decorator():
 
 def test_sub_dag_task_group():
     """
-    Tests dag.sub_dag() updates task_group correctly.
+    Tests dag.partial_subset() updates task_group correctly.
     """
     execution_date = pendulum.parse("20200101")
     with DAG("test_test_task_group_sub_dag", start_date=execution_date) as dag:
@@ -370,7 +368,7 @@ def test_sub_dag_task_group():
         group234 >> group6
         group234 >> task7
 
-    subdag = dag.sub_dag(task_ids_or_regex="task5", include_upstream=True, include_downstream=False)
+    subdag = dag.partial_subset(task_ids_or_regex="task5", include_upstream=True, include_downstream=False)
 
     assert extract_node_id(task_group_to_dict(subdag.task_group)) == {
         'id': None,
@@ -821,6 +819,27 @@ def test_task_group_context_mix():
     }
 
     assert extract_node_id(task_group_to_dict(dag.task_group)) == node_ids
+
+
+def test_default_args():
+    """Testing TaskGroup with default_args"""
+
+    execution_date = pendulum.parse("20201109")
+    with DAG(
+        dag_id='example_task_group_default_args',
+        start_date=execution_date,
+        default_args={
+            "owner": "dag",
+        },
+    ):
+        with TaskGroup("group1", default_args={"owner": "group"}):
+            task_1 = DummyOperator(task_id='task_1')
+            task_2 = DummyOperator(task_id='task_2', owner='task')
+            task_3 = DummyOperator(task_id='task_3', default_args={"owner": "task"})
+
+            assert task_1.owner == 'group'
+            assert task_2.owner == 'task'
+            assert task_3.owner == 'task'
 
 
 def test_duplicate_task_group_id():

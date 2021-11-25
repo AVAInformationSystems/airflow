@@ -16,12 +16,12 @@
 # specific language governing permissions and limitations
 # under the License.
 """Transfers data from AWS Redshift into a S3 Bucket."""
-from typing import List, Optional, Union
+from typing import Iterable, List, Mapping, Optional, Union
 
 from airflow.models import BaseOperator
+from airflow.providers.amazon.aws.hooks.redshift import RedshiftSQLHook
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.amazon.aws.utils.redshift import build_credentials_block
-from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 
 class RedshiftToS3Operator(BaseOperator):
@@ -66,16 +66,19 @@ class RedshiftToS3Operator(BaseOperator):
     :type autocommit: bool
     :param include_header: If set to True the s3 file contains the header columns.
     :type include_header: bool
+    :param parameters: (optional) the parameters to render the SQL query with.
+    :type parameters: dict or iterable
     :param table_as_file_name: If set to True, the s3 file will be named as the table.
         Applicable when ``table`` param provided.
     :type table_as_file_name: bool
     """
 
-    template_fields = ('s3_bucket', 's3_key', 'schema', 'table', 'unload_options')
-    template_ext = ()
+    template_fields = ('s3_bucket', 's3_key', 'schema', 'table', 'unload_options', 'select_query')
+    template_ext = ('.sql',)
+    template_fields_renderers = {'select_query': 'sql'}
     ui_color = '#ededed'
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(
         self,
         *,
         s3_bucket: str,
@@ -89,6 +92,7 @@ class RedshiftToS3Operator(BaseOperator):
         unload_options: Optional[List] = None,
         autocommit: bool = False,
         include_header: bool = False,
+        parameters: Optional[Union[Mapping, Iterable]] = None,
         table_as_file_name: bool = True,  # Set to True by default for not breaking current workflows
         **kwargs,
     ) -> None:
@@ -103,13 +107,13 @@ class RedshiftToS3Operator(BaseOperator):
         self.unload_options = unload_options or []  # type: List
         self.autocommit = autocommit
         self.include_header = include_header
+        self.parameters = parameters
         self.table_as_file_name = table_as_file_name
 
-        self._select_query = None
         if select_query:
-            self._select_query = select_query
+            self.select_query = select_query
         elif self.schema and self.table:
-            self._select_query = f"SELECT * FROM {self.schema}.{self.table}"
+            self.select_query = f"SELECT * FROM {self.schema}.{self.table}"
         else:
             raise ValueError(
                 'Please provide both `schema` and `table` params or `select_query` to fetch the data.'
@@ -126,23 +130,29 @@ class RedshiftToS3Operator(BaseOperator):
         return f"""
                     UNLOAD ('{select_query}')
                     TO 's3://{self.s3_bucket}/{s3_key}'
-                    with credentials
+                    credentials
                     '{credentials_block}'
                     {unload_options};
         """
 
     def execute(self, context) -> None:
-        postgres_hook = PostgresHook(postgres_conn_id=self.redshift_conn_id)
-        s3_hook = S3Hook(aws_conn_id=self.aws_conn_id, verify=self.verify)
+        redshift_hook = RedshiftSQLHook(redshift_conn_id=self.redshift_conn_id)
+        conn = S3Hook.get_connection(conn_id=self.aws_conn_id)
 
-        credentials = s3_hook.get_credentials()
-        credentials_block = build_credentials_block(credentials)
+        credentials_block = None
+        if conn.extra_dejson.get('role_arn', False):
+            credentials_block = f"aws_iam_role={conn.extra_dejson['role_arn']}"
+        else:
+            s3_hook = S3Hook(aws_conn_id=self.aws_conn_id, verify=self.verify)
+            credentials = s3_hook.get_credentials()
+            credentials_block = build_credentials_block(credentials)
+
         unload_options = '\n\t\t\t'.join(self.unload_options)
 
         unload_query = self._build_unload_query(
-            credentials_block, self._select_query, self.s3_key, unload_options
+            credentials_block, self.select_query, self.s3_key, unload_options
         )
 
         self.log.info('Executing UNLOAD command...')
-        postgres_hook.run(unload_query, self.autocommit)
+        redshift_hook.run(unload_query, self.autocommit, parameters=self.parameters)
         self.log.info("UNLOAD command complete...")

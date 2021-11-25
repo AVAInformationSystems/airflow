@@ -186,7 +186,7 @@ class GCSToGCSOperator(BaseOperator):
 
     def __init__(
         self,
-        *,  # pylint: disable=too-many-arguments
+        *,
         source_bucket,
         source_object=None,
         source_objects=None,
@@ -238,9 +238,8 @@ class GCSToGCSOperator(BaseOperator):
         )
         if self.source_objects and self.source_object:
             error_msg = (
-                "You can either set source_object parameter or source_objects "
-                "parameter but not both. Found source_object={} and"
-                " source_objects={}".format(self.source_object, self.source_objects)
+                f"You can either set source_object parameter or source_objects parameter but not both. "
+                f"Found source_object={self.source_object} and source_objects={self.source_objects}"
             )
             raise AirflowException(error_msg)
 
@@ -279,8 +278,6 @@ class GCSToGCSOperator(BaseOperator):
 
     def _copy_source_without_wildcard(self, hook, prefix):
         """
-
-
         For source_objects with no wildcard, this operator would first list
         all files in source_objects, using provided delimiter if any. Then copy
         files from source_objects to destination_object and rename each source
@@ -342,7 +339,7 @@ class GCSToGCSOperator(BaseOperator):
         if total_wildcards > 1:
             error_msg = (
                 "Only one wildcard '*' is allowed in source_object parameter. "
-                "Found {} in {}.".format(total_wildcards, prefix)
+                f"Found {total_wildcards} in {prefix}."
             )
 
             raise AirflowException(error_msg)
@@ -354,7 +351,19 @@ class GCSToGCSOperator(BaseOperator):
             # and only keep those files which are present in
             # Source GCS bucket and not in Destination GCS bucket
 
-            existing_objects = hook.list(self.destination_bucket, prefix=prefix_, delimiter=delimiter)
+            if self.destination_object is None:
+                existing_objects = hook.list(self.destination_bucket, prefix=prefix_, delimiter=delimiter)
+            else:
+                self.log.info("Replaced destination_object with source_object prefix.")
+                destination_objects = hook.list(
+                    self.destination_bucket,
+                    prefix=self.destination_object,
+                    delimiter=delimiter,
+                )
+                existing_objects = [
+                    dest_object.replace(self.destination_object, prefix_, 1)
+                    for dest_object in destination_objects
+                ]
 
             objects = set(objects) - set(existing_objects)
             if len(objects) > 0:

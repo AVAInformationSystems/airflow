@@ -44,7 +44,7 @@ JOB_ID_PATTERN = re.compile(
     r"Submitted job: (?P<job_id_java>.*)|Created job with id: \[(?P<job_id_python>.*)\]"
 )
 
-T = TypeVar("T", bound=Callable)  # pylint: disable=invalid-name
+T = TypeVar("T", bound=Callable)
 
 
 def process_line_and_extract_dataflow_job_id_callback(
@@ -184,7 +184,7 @@ class _DataflowJobsController(LoggingMixin):
         * for the batch pipeline, wait for the jobs to complete.
     """
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(
         self,
         dataflow: Any,
         project_number: str,
@@ -230,7 +230,6 @@ class _DataflowJobsController(LoggingMixin):
                 return True
         return False
 
-    # pylint: disable=too-many-nested-blocks
     def _get_current_jobs(self) -> List[dict]:
         """
         Helper method to get list of jobs that start with job name or id
@@ -357,10 +356,13 @@ class _DataflowJobsController(LoggingMixin):
             .jobs()
             .list(projectId=self._project_number, location=self._job_location)
         )
-        jobs: List[dict] = []
+        all_jobs: List[dict] = []
         while request is not None:
             response = request.execute(num_retries=self._num_retries)
-            jobs.extend(response["jobs"])
+            jobs = response.get("jobs")
+            if jobs is None:
+                break
+            all_jobs.extend(jobs)
 
             request = (
                 self._dataflow.projects()
@@ -368,7 +370,7 @@ class _DataflowJobsController(LoggingMixin):
                 .jobs()
                 .list_next(previous_request=request, previous_response=response)
             )
-        return jobs
+        return all_jobs
 
     def _fetch_jobs_by_prefix_name(self, prefix_name: str) -> List[dict]:
         jobs = self._fetch_all_jobs()
@@ -499,8 +501,8 @@ class _DataflowJobsController(LoggingMixin):
                 )
             batch.execute()
             if self._cancel_timeout and isinstance(self._cancel_timeout, int):
-                timeout_error_message = "Canceling jobs failed due to timeout ({}s): {}".format(
-                    self._cancel_timeout, ", ".join(job_ids)
+                timeout_error_message = (
+                    f"Canceling jobs failed due to timeout ({self._cancel_timeout}s): {', '.join(job_ids)}"
                 )
                 with timeout(seconds=self._cancel_timeout, error_message=timeout_error_message):
                     self._wait_for_states({DataflowJobStatus.JOB_STATE_CANCELLED})
@@ -605,7 +607,7 @@ class DataflowHook(GoogleBaseHook):
             job_class=job_class,
             process_line_callback=process_line_and_extract_dataflow_job_id_callback(on_new_job_id_callback),
         )
-        self.wait_for_done(  # pylint: disable=no-value-for-parameter
+        self.wait_for_done(
             job_name=name,
             location=location,
             job_id=self.job_id,
@@ -624,6 +626,7 @@ class DataflowHook(GoogleBaseHook):
         project_id: str,
         append_job_name: bool = True,
         on_new_job_id_callback: Optional[Callable[[str], None]] = None,
+        on_new_job_callback: Optional[Callable[[dict], None]] = None,
         location: str = DEFAULT_DATAFLOW_LOCATION,
         environment: Optional[dict] = None,
     ) -> dict:
@@ -649,8 +652,10 @@ class DataflowHook(GoogleBaseHook):
             If set to None or missing, the default project_id from the Google Cloud connection is used.
         :param append_job_name: True if unique suffix has to be appended to job name.
         :type append_job_name: bool
-        :param on_new_job_id_callback: Callback called when the job ID is known.
+        :param on_new_job_id_callback: (Deprecated) Callback called when the Job is known.
         :type on_new_job_id_callback: callable
+        :param on_new_job_callback: Callback called when the Job is known.
+        :type on_new_job_callback: callable
         :param location: Job location.
         :type location: str
         :type environment: Optional, Map of job runtime environment options.
@@ -696,7 +701,7 @@ class DataflowHook(GoogleBaseHook):
                 environment.update({key: variables[key]})
 
         service = self.get_conn()
-        # pylint: disable=no-member
+
         request = (
             service.projects()
             .locations()
@@ -714,15 +719,24 @@ class DataflowHook(GoogleBaseHook):
         )
         response = request.execute(num_retries=self.num_retries)
 
-        job_id = response["job"]["id"]
+        job = response["job"]
+
         if on_new_job_id_callback:
-            on_new_job_id_callback(job_id)
+            warnings.warn(
+                "on_new_job_id_callback is Deprecated. Please start using on_new_job_callback",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            on_new_job_id_callback(job.get("id"))
+
+        if on_new_job_callback:
+            on_new_job_callback(job)
 
         jobs_controller = _DataflowJobsController(
             dataflow=self.get_conn(),
             project_number=project_id,
             name=name,
-            job_id=job_id,
+            job_id=job["id"],
             location=location,
             poll_sleep=self.poll_sleep,
             num_retries=self.num_retries,
@@ -740,6 +754,7 @@ class DataflowHook(GoogleBaseHook):
         location: str,
         project_id: str,
         on_new_job_id_callback: Optional[Callable[[str], None]] = None,
+        on_new_job_callback: Optional[Callable[[dict], None]] = None,
     ):
         """
         Starts flex templates with the Dataflow  pipeline.
@@ -751,26 +766,35 @@ class DataflowHook(GoogleBaseHook):
         :param project_id: The ID of the GCP project that owns the job.
             If set to ``None`` or missing, the default project_id from the GCP connection is used.
         :type project_id: Optional[str]
-        :param on_new_job_id_callback: A callback that is called when a Job ID is detected.
+        :param on_new_job_id_callback: (Deprecated) A callback that is called when a Job ID is detected.
+        :param on_new_job_callback: A callback that is called when a Job is detected.
         :return: the Job
         """
         service = self.get_conn()
         request = (
-            service.projects()  # pylint: disable=no-member
+            service.projects()
             .locations()
             .flexTemplates()
             .launch(projectId=project_id, body=body, location=location)
         )
         response = request.execute(num_retries=self.num_retries)
-        job_id = response["job"]["id"]
+        job = response["job"]
 
         if on_new_job_id_callback:
-            on_new_job_id_callback(job_id)
+            warnings.warn(
+                "on_new_job_id_callback is Deprecated. Please start using on_new_job_callback",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            on_new_job_id_callback(job.get("id"))
+
+        if on_new_job_callback:
+            on_new_job_callback(job)
 
         jobs_controller = _DataflowJobsController(
             dataflow=self.get_conn(),
             project_number=project_id,
-            job_id=job_id,
+            job_id=job.get("id"),
             location=location,
             poll_sleep=self.poll_sleep,
             num_retries=self.num_retries,
@@ -784,7 +808,7 @@ class DataflowHook(GoogleBaseHook):
     @_fallback_to_location_from_variables
     @_fallback_to_project_id_from_variables
     @GoogleBaseHook.fallback_to_default_project_id
-    def start_python_dataflow(  # pylint: disable=too-many-arguments
+    def start_python_dataflow(
         self,
         job_name: str,
         variables: dict,
@@ -862,7 +886,7 @@ class DataflowHook(GoogleBaseHook):
             process_line_callback=process_line_and_extract_dataflow_job_id_callback(on_new_job_id_callback),
         )
 
-        self.wait_for_done(  # pylint: disable=no-value-for-parameter
+        self.wait_for_done(
             job_name=name,
             location=location,
             job_id=self.job_id,
@@ -875,9 +899,8 @@ class DataflowHook(GoogleBaseHook):
 
         if not re.match(r"^[a-z]([-a-z0-9]*[a-z0-9])?$", base_job_name):
             raise ValueError(
-                "Invalid job_name ({}); the name must consist of"
-                "only the characters [-a-z0-9], starting with a "
-                "letter and ending with a letter or number ".format(base_job_name)
+                f"Invalid job_name ({base_job_name}); the name must consist of only the characters "
+                f"[-a-z0-9], starting with a letter and ending with a letter or number "
             )
 
         if append_job_name:
@@ -974,6 +997,7 @@ class DataflowHook(GoogleBaseHook):
         project_id: str,
         location: str = DEFAULT_DATAFLOW_LOCATION,
         on_new_job_id_callback: Optional[Callable[[str], None]] = None,
+        on_new_job_callback: Optional[Callable[[dict], None]] = None,
     ):
         """
         Starts Dataflow SQL query.
@@ -992,8 +1016,10 @@ class DataflowHook(GoogleBaseHook):
         :param project_id: The ID of the GCP project that owns the job.
             If set to ``None`` or missing, the default project_id from the GCP connection is used.
         :type project_id: Optional[str]
-        :param on_new_job_id_callback: Callback called when the job ID is known.
+        :param on_new_job_id_callback: (Deprecated) Callback called when the job ID is known.
         :type on_new_job_id_callback: callable
+        :param on_new_job_callback: Callback called when the job is known.
+        :type on_new_job_callback: callable
         :return: the new job object
         """
         cmd = [
@@ -1010,9 +1036,7 @@ class DataflowHook(GoogleBaseHook):
         ]
         self.log.info("Executing command: %s", " ".join(shlex.quote(c) for c in cmd))
         with self.provide_authorized_gcloud():
-            proc = subprocess.run(  # pylint: disable=subprocess-run-check
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.log.info("Output: %s", proc.stdout.decode())
         self.log.warning("Stderr: %s", proc.stderr.decode())
         self.log.info("Exit code %d", proc.returncode)
@@ -1021,8 +1045,6 @@ class DataflowHook(GoogleBaseHook):
         job_id = proc.stdout.decode().strip()
 
         self.log.info("Created job ID: %s", job_id)
-        if on_new_job_id_callback:
-            on_new_job_id_callback(job_id)
 
         jobs_controller = _DataflowJobsController(
             dataflow=self.get_conn(),
@@ -1034,8 +1056,20 @@ class DataflowHook(GoogleBaseHook):
             drain_pipeline=self.drain_pipeline,
             wait_until_finished=self.wait_until_finished,
         )
-        jobs_controller.wait_for_done()
+        job = jobs_controller.get_jobs(refresh=True)[0]
 
+        if on_new_job_id_callback:
+            warnings.warn(
+                "on_new_job_id_callback is Deprecated. Please start using on_new_job_callback",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            on_new_job_id_callback(job.get("id"))
+
+        if on_new_job_callback:
+            on_new_job_callback(job)
+
+        jobs_controller.wait_for_done()
         return jobs_controller.get_jobs(refresh=True)[0]
 
     @GoogleBaseHook.fallback_to_default_project_id

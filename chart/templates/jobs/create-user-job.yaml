@@ -19,9 +19,9 @@
 ## Airflow Create User Job
 #################################
 {{- if .Values.webserver.defaultUser.enabled }}
-{{- $nodeSelector := or .Values.webserver.nodeSelector .Values.nodeSelector }}
-{{- $affinity := or .Values.webserver.affinity .Values.affinity }}
-{{- $tolerations := or .Values.webserver.tolerations .Values.tolerations }}
+{{- $nodeSelector := or .Values.createUserJob.nodeSelector .Values.nodeSelector }}
+{{- $affinity := or .Values.createUserJob.affinity .Values.affinity }}
+{{- $tolerations := or .Values.createUserJob.tolerations .Values.tolerations }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -35,10 +35,16 @@ metadata:
 {{- with .Values.labels }}
 {{ toYaml . | indent 4 }}
 {{- end }}
+  {{- $annotations := dict }}
+  {{- if .Values.createUserJob.useHelmHooks }}
+    {{- $_ := set $annotations "helm.sh/hook" "post-install,post-upgrade" }}
+    {{- $_ := set $annotations "helm.sh/hook-weight" "1" }}
+    {{- $_ := set $annotations "helm.sh/hook-delete-policy" "before-hook-creation,hook-succeeded" }}
+  {{- end }}
+  {{- with $annotations := merge $annotations .Values.createUserJob.jobAnnotations }}
   annotations:
-    "helm.sh/hook": post-install
-    "helm.sh/hook-weight": "2"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- $annotations | toYaml | nindent 4 }}
+  {{- end }}
 spec:
   template:
     metadata:
@@ -46,6 +52,9 @@ spec:
         tier: airflow
         component: create-user-job
         release: {{ .Release.Name }}
+{{- with .Values.labels }}
+{{ toYaml . | indent 8 }}
+{{- end }}
       {{- if or .Values.airflowPodAnnotations .Values.createUserJob.annotations }}
       annotations:
         {{- if .Values.airflowPodAnnotations }}
@@ -105,6 +114,8 @@ spec:
               mountPath: {{ template "airflow_config_path" . }}
               subPath: airflow.cfg
               readOnly: true
+          resources:
+{{ toYaml .Values.createUserJob.resources | indent 12 }}
       volumes:
         - name: config
           configMap:

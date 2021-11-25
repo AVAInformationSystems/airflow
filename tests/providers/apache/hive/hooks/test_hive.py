@@ -28,6 +28,7 @@ import pandas as pd
 import pytest
 from hmsclient import HMSClient
 
+from airflow import PY39
 from airflow.exceptions import AirflowException
 from airflow.models.connection import Connection
 from airflow.models.dag import DAG
@@ -37,13 +38,19 @@ from airflow.utils import timezone
 from airflow.utils.operator_helpers import AIRFLOW_VAR_NAME_FORMAT_MAPPING
 from tests.test_utils.asserts import assert_equal_ignore_multiple_spaces
 from tests.test_utils.mock_hooks import MockHiveCliHook, MockHiveServer2Hook
-from tests.test_utils.mock_process import MockSubProcess
+from tests.test_utils.mock_process import EmptyMockConnectionCursor, MockSubProcess
 
 DEFAULT_DATE = timezone.datetime(2015, 1, 1)
 DEFAULT_DATE_ISO = DEFAULT_DATE.isoformat()
 DEFAULT_DATE_DS = DEFAULT_DATE_ISO[:10]
 
 
+@pytest.mark.skipif(
+    PY39,
+    reason="Hive does not run on Python 3.9 because it brings SASL via thrift-sasl."
+    " This could be removed when https://github.com/dropbox/PyHive/issues/380"
+    " is solved",
+)
 class TestHiveEnvironment(unittest.TestCase):
     def setUp(self):
         self.next_day = (DEFAULT_DATE + datetime.timedelta(days=1)).isoformat()[:10]
@@ -52,12 +59,20 @@ class TestHiveEnvironment(unittest.TestCase):
         self.table = 'static_babynames_partitioned'
         with mock.patch(
             'airflow.providers.apache.hive.hooks.hive.HiveMetastoreHook.get_metastore_client'
-        ) as get_metastore_mock:
+        ) as get_metastore_mock, mock.patch(
+            'airflow.providers.apache.hive.hooks.hive.HiveMetastoreHook.get_connection'
+        ):
             get_metastore_mock.return_value = mock.MagicMock()
 
             self.hook = HiveMetastoreHook()
 
 
+@pytest.mark.skipif(
+    PY39,
+    reason="Hive does not run on Python 3.9 because it brings SASL via thrift-sasl."
+    " This could be removed when https://github.com/dropbox/PyHive/issues/380"
+    " is solved",
+)
 class TestHiveCliHook(unittest.TestCase):
     @mock.patch('tempfile.tempdir', '/tmp/')
     @mock.patch('tempfile._RandomNameSequence.__next__')
@@ -242,9 +257,7 @@ class TestHiveCliHook(unittest.TestCase):
             "STORED AS textfile\n;".format(table=table, fields=fields)
         )
 
-        load_data = "LOAD DATA LOCAL INPATH '{filepath}' OVERWRITE INTO TABLE {table} ;\n".format(
-            filepath=filepath, table=table
-        )
+        load_data = f"LOAD DATA LOCAL INPATH '{filepath}' OVERWRITE INTO TABLE {table} ;\n"
         calls = [mock.call(create_table), mock.call(load_data)]
         mock_run_cli.assert_has_calls(calls, any_order=True)
 
@@ -324,6 +337,12 @@ class TestHiveCliHook(unittest.TestCase):
         assert_equal_ignore_multiple_spaces(self, mock_run_cli.call_args_list[0][0][0], query)
 
 
+@pytest.mark.skipif(
+    PY39,
+    reason="Hive does not run on Python 3.9 because it brings SASL via thrift-sasl."
+    " This could be removed when https://github.com/dropbox/PyHive/issues/380"
+    " is solved",
+)
 class TestHiveMetastoreHook(TestHiveEnvironment):
     VALID_FILTER_MAP = {'key2': 'value2'}
 
@@ -383,19 +402,33 @@ class TestHiveMetastoreHook(TestHiveEnvironment):
         assert isinstance(max_partition, str)
 
     @mock.patch(
-        "airflow.providers.apache.hive.hooks.hive.HiveMetastoreHook.get_connection",
-        return_value=Connection(host="localhost", port=9802),
+        "airflow.providers.apache.hive.hooks.hive.HiveMetastoreHook._find_valid_host",
+        return_value="localhost",
     )
     @mock.patch("airflow.providers.apache.hive.hooks.hive.socket")
-    def test_error_metastore_client(self, socket_mock, _find_valid_server_mock):
+    def test_error_metastore_client(self, socket_mock, _find_valid_host_mock):
         socket_mock.socket.return_value.connect_ex.return_value = 0
         self.hook.get_metastore_client()
 
+    @mock.patch(
+        "airflow.providers.apache.hive.hooks.hive.HiveMetastoreHook.get_connection",
+        return_value=Connection(host="metastore1.host,metastore2.host", port=9802),
+    )
+    @mock.patch("airflow.providers.apache.hive.hooks.hive.socket")
+    def test_ha_hosts(self, socket_mock, get_connection_mock):
+        socket_mock.socket.return_value.connect_ex.return_value = 1
+        with pytest.raises(AirflowException):
+            HiveMetastoreHook()
+        assert socket_mock.socket.call_count == 2
+
     def test_get_conn(self):
         with mock.patch(
-            'airflow.providers.apache.hive.hooks.hive.HiveMetastoreHook._find_valid_server'
-        ) as find_valid_server:
-            find_valid_server.return_value = mock.MagicMock(return_value={})
+            'airflow.providers.apache.hive.hooks.hive.HiveMetastoreHook._find_valid_host'
+        ) as find_valid_host, mock.patch(
+            'airflow.providers.apache.hive.hooks.hive.HiveMetastoreHook.get_connection'
+        ) as get_connection:
+            find_valid_host.return_value = mock.MagicMock(return_value="")
+            get_connection.return_value = mock.MagicMock(return_value="")
             metastore_hook = HiveMetastoreHook()
 
         assert isinstance(metastore_hook.get_conn(), HMSClient)
@@ -464,7 +497,7 @@ class TestHiveMetastoreHook(TestHiveEnvironment):
         self.hook.metastore.__enter__().get_tables.assert_called_with(
             db_name='airflow', pattern='static_babynames_partitioned*'
         )
-        # pylint: disable=no-member
+
         self.hook.metastore.__enter__().get_table_objects_by_name.assert_called_with(
             'airflow', ['static_babynames_partitioned']
         )
@@ -549,6 +582,12 @@ class TestHiveMetastoreHook(TestHiveEnvironment):
         assert metastore_mock.drop_partition(self.table, db=self.database, part_vals=[DEFAULT_DATE_DS]), ret
 
 
+@pytest.mark.skipif(
+    PY39,
+    reason="Hive does not run on Python 3.9 because it brings SASL via thrift-sasl."
+    " This could be removed when https://github.com/dropbox/PyHive/issues/380"
+    " is solved",
+)
 class TestHiveServer2Hook(unittest.TestCase):
     def _upload_dataframe(self):
         df = pd.DataFrame({'a': [1, 2], 'b': [1, 2]})
@@ -661,6 +700,13 @@ class TestHiveServer2Hook(unittest.TestCase):
         hook.mock_cursor.execute.assert_any_call('set airflow.ctx.dag_run_id=55')
         hook.mock_cursor.execute.assert_any_call('set airflow.ctx.dag_owner=airflow')
         hook.mock_cursor.execute.assert_any_call('set airflow.ctx.dag_email=test@airflow.com')
+
+        hook = MockHiveServer2Hook(connection_cursor=EmptyMockConnectionCursor())
+        query = f"SELECT * FROM {self.table}"
+
+        df = hook.get_pandas_df(query, schema=self.database)
+
+        assert len(df) == 0
 
     def test_get_results_header(self):
         hook = MockHiveServer2Hook()
@@ -797,6 +843,12 @@ class TestHiveServer2Hook(unittest.TestCase):
         assert 'test_dag_run_id' in output
 
 
+@pytest.mark.skipif(
+    PY39,
+    reason="Hive does not run on Python 3.9 because it brings SASL via thrift-sasl."
+    " This could be removed when https://github.com/dropbox/PyHive/issues/380"
+    " is solved",
+)
 class TestHiveCli(unittest.TestCase):
     def setUp(self):
         self.nondefault_schema = "nondefault"

@@ -47,7 +47,6 @@ class _QuboleCheckOperatorMixin:
         )
 
 
-# pylint: disable=too-many-ancestors
 class QuboleCheckOperator(_QuboleCheckOperatorMixin, SQLCheckOperator, QuboleOperator):
     """
     Performs checks against Qubole Commands. ``QuboleCheckOperator`` expects
@@ -116,7 +115,8 @@ class QuboleCheckOperator(_QuboleCheckOperatorMixin, SQLCheckOperator, QuboleOpe
 
 
 # TODO(xinbinhuang): refactor to reduce levels of inheritance
-# pylint: disable=too-many-ancestors
+
+
 class QuboleValueCheckOperator(_QuboleCheckOperatorMixin, SQLValueCheckOperator, QuboleOperator):
     """
     Performs a simple value check using Qubole command.
@@ -197,11 +197,7 @@ def handle_airflow_exception(airflow_exception, hook: QuboleCheckHook):
             qubole_command_results = hook.get_query_results()
             qubole_command_id = cmd.id
             exception_message = (
-                '\nQubole Command Id: {qubole_command_id}'
-                '\nQubole Command Results:'
-                '\n{qubole_command_results}'.format(
-                    qubole_command_id=qubole_command_id, qubole_command_results=qubole_command_results
-                )
+                f'\nQubole Command Id: {qubole_command_id}\nQubole Command Results:\n{qubole_command_results}'
             )
             raise AirflowException(str(airflow_exception) + exception_message)
     raise AirflowException(str(airflow_exception))

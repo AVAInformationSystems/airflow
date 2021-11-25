@@ -19,6 +19,84 @@
 Changelog
 ---------
 
+2.3.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Added upsert method on S3ToRedshift operator (#18027)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix example dag of PostgresOperator (#18236)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Static start_date and default arg cleanup for misc. provider example DAGs (#18597)``
+
+2.2.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Make schema in DBApiHook private (#17423)``
+
+Misc
+~~~~
+
+* ``Optimise connection importing for Airflow 2.2.0``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Update description about the new ''connection-types'' provider meta-data (#17767)``
+   * ``refactor: fixed type annotation for 'sql' param in PostgresOperator (#17331)``
+   * ``Import Hooks lazily individually in providers manager (#17682)``
+   * ``Improve postgres provider logging (#17214)``
+
+2.1.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Add schema as DbApiHook instance attribute (#16521)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Removes pylint from our toolchain (#16682)``
+   * ``Prepare documentation for July release of providers. (#17015)``
+   * ``Fixed wrongly escaped characters in amazon's changelog (#17020)``
+   * ``Remove/refactor default_args pattern for miscellaneous providers (#16872)``
+
+2.0.0
+.....
+
+Breaking changes
+~~~~~~~~~~~~~~~~
+
+* ``Auto-apply apply_default decorator (#15667)``
+
+.. warning:: Due to apply_default decorator removal, this version of the provider requires Airflow 2.1.0+.
+   If your Airflow version is < 2.1.0, and you want to install this provider version, first upgrade
+   Airflow to at least version 2.1.0. Otherwise your Airflow package version will be upgraded
+   automatically and you will have to manually run ``airflow upgrade db`` to complete the migration.
+
+Features
+~~~~~~~~
+
+* ``PostgresHook: deepcopy connection to avoid mutating connection obj (#15412)``
+* ``postgres_hook_aws_conn_id (#16100)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Updated documentation for June 2021 provider release (#16294)``
+   * ``Fix spelling (#15699)``
+   * ``More documentation update for June providers release (#16405)``
+   * ``Synchronizes updated changelog after buggfix release (#16464)``
+
 1.0.2
 .....
 

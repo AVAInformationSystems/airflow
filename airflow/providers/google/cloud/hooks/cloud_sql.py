@@ -15,7 +15,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-# pylint: disable=too-many-lines
+
 """This module contains a Google Cloud SQL Hook."""
 
 import errno
@@ -33,13 +33,13 @@ import time
 import uuid
 from pathlib import Path
 from subprocess import PIPE, Popen
+from tempfile import gettempdir
 from typing import Any, Dict, List, Optional, Sequence, Union
 from urllib.parse import quote_plus
 
 import httpx
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
-from sqlalchemy.orm import Session
 
 from airflow.exceptions import AirflowException
 
@@ -51,7 +51,6 @@ from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
 from airflow.providers.mysql.hooks.mysql import MySqlHook
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.utils.log.logging_mixin import LoggingMixin
-from airflow.utils.session import provide_session
 
 UNIX_PATH_MAX = 108
 
@@ -87,7 +86,7 @@ class CloudSQLHook(GoogleBaseHook):
     """
 
     conn_name_attr = 'gcp_conn_id'
-    default_conn_name = 'google_cloud_default'
+    default_conn_name = 'google_cloud_sql_default'
     conn_type = 'gcpcloudsql'
     hook_name = 'Google Cloud SQL'
 
@@ -132,7 +131,7 @@ class CloudSQLHook(GoogleBaseHook):
         :rtype: dict
         """
         return (
-            self.get_conn()  # noqa # pylint: disable=no-member
+            self.get_conn()
             .instances()
             .get(project=project_id, instance=instance)
             .execute(num_retries=self.num_retries)
@@ -153,7 +152,7 @@ class CloudSQLHook(GoogleBaseHook):
         :return: None
         """
         response = (
-            self.get_conn()  # noqa # pylint: disable=no-member
+            self.get_conn()
             .instances()
             .insert(project=project_id, body=body)
             .execute(num_retries=self.num_retries)
@@ -181,7 +180,7 @@ class CloudSQLHook(GoogleBaseHook):
         :return: None
         """
         response = (
-            self.get_conn()  # noqa # pylint: disable=no-member
+            self.get_conn()
             .instances()
             .patch(project=project_id, instance=instance, body=body)
             .execute(num_retries=self.num_retries)
@@ -203,7 +202,7 @@ class CloudSQLHook(GoogleBaseHook):
         :return: None
         """
         response = (
-            self.get_conn()  # noqa # pylint: disable=no-member
+            self.get_conn()
             .instances()
             .delete(project=project_id, instance=instance)
             .execute(num_retries=self.num_retries)
@@ -228,7 +227,7 @@ class CloudSQLHook(GoogleBaseHook):
         :rtype: dict
         """
         return (
-            self.get_conn()  # noqa # pylint: disable=no-member
+            self.get_conn()
             .databases()
             .get(project=project_id, instance=instance, database=database)
             .execute(num_retries=self.num_retries)
@@ -251,7 +250,7 @@ class CloudSQLHook(GoogleBaseHook):
         :return: None
         """
         response = (
-            self.get_conn()  # noqa # pylint: disable=no-member
+            self.get_conn()
             .databases()
             .insert(project=project_id, instance=instance, body=body)
             .execute(num_retries=self.num_retries)
@@ -287,7 +286,7 @@ class CloudSQLHook(GoogleBaseHook):
         :return: None
         """
         response = (
-            self.get_conn()  # noqa # pylint: disable=no-member
+            self.get_conn()
             .databases()
             .patch(project=project_id, instance=instance, database=database, body=body)
             .execute(num_retries=self.num_retries)
@@ -311,7 +310,7 @@ class CloudSQLHook(GoogleBaseHook):
         :return: None
         """
         response = (
-            self.get_conn()  # noqa # pylint: disable=no-member
+            self.get_conn()
             .databases()
             .delete(project=project_id, instance=instance, database=database)
             .execute(num_retries=self.num_retries)
@@ -338,7 +337,7 @@ class CloudSQLHook(GoogleBaseHook):
         :return: None
         """
         response = (
-            self.get_conn()  # noqa # pylint: disable=no-member
+            self.get_conn()
             .instances()
             .export(project=project_id, instance=instance, body=body)
             .execute(num_retries=self.num_retries)
@@ -365,7 +364,7 @@ class CloudSQLHook(GoogleBaseHook):
         """
         try:
             response = (
-                self.get_conn()  # noqa # pylint: disable=no-member
+                self.get_conn()
                 .instances()
                 .import_(project=project_id, instance=instance, body=body)
                 .execute(num_retries=self.num_retries)
@@ -389,7 +388,7 @@ class CloudSQLHook(GoogleBaseHook):
         service = self.get_conn()
         while True:
             operation_response = (
-                service.operations()  # noqa # pylint: disable=no-member
+                service.operations()
                 .get(project=project_id, operation=operation_name)
                 .execute(num_retries=self.num_retries)
             )
@@ -507,8 +506,8 @@ class CloudSqlProxyRunner(LoggingMixin):
             file.write(response.content)
         if response.status_code != 200:
             raise AirflowException(
-                "The cloud-sql-proxy could not be downloaded. Status code = {}. "
-                "Reason = {}".format(response.status_code, response.reason)
+                "The cloud-sql-proxy could not be downloaded. "
+                f"Status code = {response.status_code}. Reason = {response.reason}"
             )
 
         self.log.info("Moving sql_proxy binary from %s to %s", proxy_path_tmp, self.sql_proxy_path)
@@ -516,10 +515,9 @@ class CloudSqlProxyRunner(LoggingMixin):
         os.chmod(self.sql_proxy_path, 0o744)  # Set executable bit
         self.sql_proxy_was_downloaded = True
 
-    @provide_session
-    def _get_credential_parameters(self, session: Session) -> List[str]:
-        connection = session.query(Connection).filter(Connection.conn_id == self.gcp_conn_id).first()
-        session.expunge_all()
+    def _get_credential_parameters(self) -> List[str]:
+        connection = GoogleBaseHook.get_connection(conn_id=self.gcp_conn_id)
+
         if connection.extra_dejson.get(GCP_CREDENTIALS_KEY_PATH):
             credential_params = ['-credential_file', connection.extra_dejson[GCP_CREDENTIALS_KEY_PATH]]
         elif connection.extra_dejson.get(GCP_CREDENTIALS_KEYFILE_DICT):
@@ -565,9 +563,9 @@ class CloudSqlProxyRunner(LoggingMixin):
             command_to_run.extend(self.command_line_parameters)
             self.log.info("Creating directory %s", self.cloud_sql_proxy_socket_directory)
             Path(self.cloud_sql_proxy_socket_directory).mkdir(parents=True, exist_ok=True)
-            command_to_run.extend(self._get_credential_parameters())  # pylint: disable=no-value-for-parameter
+            command_to_run.extend(self._get_credential_parameters())
             self.log.info("Running the command: `%s`", " ".join(command_to_run))
-            # pylint: disable=consider-using-with
+
             self.sql_proxy_process = Popen(command_to_run, stdin=PIPE, stdout=PIPE, stderr=PIPE)
             self.log.info("The pid of cloud_sql_proxy: %s", self.sql_proxy_process.pid)
             while True:
@@ -625,7 +623,7 @@ class CloudSqlProxyRunner(LoggingMixin):
         self._download_sql_proxy_if_needed()
         command_to_run = [self.sql_proxy_path]
         command_to_run.extend(['--version'])
-        command_to_run.extend(self._get_credential_parameters())  # pylint: disable=no-value-for-parameter
+        command_to_run.extend(self._get_credential_parameters())
         result = subprocess.check_output(command_to_run).decode('utf-8')
         pattern = re.compile("^.*[V|v]ersion ([^;]*);.*$")
         matched = pattern.match(result)
@@ -674,10 +672,8 @@ CONNECTION_URIS = {
 CLOUD_SQL_VALID_DATABASE_TYPES = ['postgres', 'mysql']
 
 
-class CloudSQLDatabaseHook(BaseHook):  # noqa
-    # pylint: disable=too-many-instance-attributes
-    """
-    Serves DB connection configuration for Google Cloud SQL (Connections
+class CloudSQLDatabaseHook(BaseHook):
+    """Serves DB connection configuration for Google Cloud SQL (Connections
     of *gcpcloudsqldb://* type).
 
     The hook is a "meta" one. It does not perform an actual connection.
@@ -725,8 +721,9 @@ class CloudSQLDatabaseHook(BaseHook):  # noqa
            in the connection URL
     :type default_gcp_project_id: str
     """
+
     conn_name_attr = 'gcp_cloudsql_conn_id'
-    default_conn_name = 'google_cloud_sql_default'
+    default_conn_name = 'google_cloud_sqldb_default'
     conn_type = 'gcpcloudsqldb'
     hook_name = 'Google Cloud SQL Database'
 
@@ -792,9 +789,8 @@ class CloudSQLDatabaseHook(BaseHook):  # noqa
             raise AirflowException("The required extra 'instance' is empty or None")
         if self.database_type not in CLOUD_SQL_VALID_DATABASE_TYPES:
             raise AirflowException(
-                "Invalid database type '{}'. Must be one of {}".format(
-                    self.database_type, CLOUD_SQL_VALID_DATABASE_TYPES
-                )
+                f"Invalid database type '{self.database_type}'. "
+                f"Must be one of {CLOUD_SQL_VALID_DATABASE_TYPES}"
             )
         if self.use_proxy and self.use_ssl:
             raise AirflowException(
@@ -825,17 +821,15 @@ class CloudSQLDatabaseHook(BaseHook):  # noqa
                 suffix = "/.s.PGSQL.5432"
             else:
                 suffix = ""
-            expected_path = "{}/{}:{}:{}{}".format(
-                self._generate_unique_path(), self.project_id, self.instance, self.database, suffix
+            expected_path = (
+                f"{self._generate_unique_path()}/{self.project_id}:{self.instance}:{self.database}{suffix}"
             )
             if len(expected_path) > UNIX_PATH_MAX:
                 self.log.info("Too long (%s) path: %s", len(expected_path), expected_path)
                 raise AirflowException(
-                    "The UNIX socket path length cannot exceed {} characters "
-                    "on Linux system. Either use shorter instance/database "
-                    "name or switch to TCP connection. "
-                    "The socket path for Cloud SQL proxy is now:"
-                    "{}".format(UNIX_PATH_MAX, expected_path)
+                    f"The UNIX socket path length cannot exceed {UNIX_PATH_MAX} characters on Linux system. "
+                    "Either use shorter instance/database name or switch to TCP connection. "
+                    f"The socket path for Cloud SQL proxy is now:{expected_path}"
                 )
 
     @staticmethod
@@ -845,12 +839,12 @@ class CloudSQLDatabaseHook(BaseHook):  # noqa
         can be close to 60 characters and there is a limitation in
         length of socket path to around 100 characters in total.
         We append project/location/instance to it later and postgres
-        appends its own prefix, so we chose a shorter "/tmp/[8 random characters]"
+        appends its own prefix, so we chose a shorter "${tempdir()}[8 random characters]"
         """
         random.seed()
         while True:
-            candidate = "/tmp/" + ''.join(
-                random.choice(string.ascii_lowercase + string.digits) for _ in range(8)
+            candidate = os.path.join(
+                gettempdir(), ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(8))
             )
             if not os.path.exists(candidate):
                 return candidate
@@ -878,10 +872,7 @@ class CloudSQLDatabaseHook(BaseHook):  # noqa
                 format_string = proxy_uris['tcp']
             else:
                 format_string = proxy_uris['socket']
-                socket_path = "{sql_proxy_socket_path}/{instance_socket_name}".format(
-                    sql_proxy_socket_path=self.sql_proxy_unique_path,
-                    instance_socket_name=self._get_instance_socket_name(),
-                )
+                socket_path = f"{self.sql_proxy_unique_path}/{self._get_instance_socket_name()}"
         else:
             public_uris = database_uris['public']  # type: Dict[str, str]
             if self.use_ssl:

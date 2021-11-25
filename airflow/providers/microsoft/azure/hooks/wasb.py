@@ -29,7 +29,7 @@ field (see connection `wasb_default` for an example).
 from typing import Any, Dict, List, Optional
 
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
-from azure.identity import ClientSecretCredential
+from azure.identity import ClientSecretCredential, ManagedIdentityCredential
 from azure.storage.blob import BlobClient, BlobServiceClient, ContainerClient, StorageStreamDownloader
 
 from airflow.exceptions import AirflowException
@@ -45,6 +45,9 @@ class WasbHook(BaseHook):
     Additional options passed in the 'extra' field of the connection will be
     passed to the `BlockBlockService()` constructor. For example, authenticate
     using a SAS token by adding {"sas_token": "YOUR_TOKEN"}.
+
+    If no authentication configuration is provided, managed identity will be used (applicable
+    when using Azure compute infrastructure).
 
     :param wasb_conn_id: Reference to the :ref:`wasb connection <howto/connection:wasb>`.
     :type wasb_conn_id: str
@@ -83,7 +86,7 @@ class WasbHook(BaseHook):
     def get_ui_field_behaviour() -> Dict:
         """Returns custom field behaviour"""
         return {
-            "hidden_fields": ['schema', 'port', 'host'],
+            "hidden_fields": ['schema', 'port'],
             "relabeling": {
                 'login': 'Blob Storage Login (optional)',
                 'password': 'Blob Storage Key (optional)',
@@ -107,7 +110,7 @@ class WasbHook(BaseHook):
         self.public_read = public_read
         self.connection = self.get_conn()
 
-    def get_conn(self) -> BlobServiceClient:  # pylint: disable=too-many-return-statements
+    def get_conn(self) -> BlobServiceClient:
         """Return the BlobServiceClient object."""
         conn = self.get_connection(self.conn_id)
         extra = conn.extra_dejson or {}
@@ -135,14 +138,20 @@ class WasbHook(BaseHook):
             return BlobServiceClient(account_url=conn.host, credential=token_credential)
         sas_token = extra.get('sas_token') or extra.get('extra__wasb__sas_token')
         if sas_token and sas_token.startswith('https'):
-            return BlobServiceClient(account_url=extra.get('sas_token'))
+            return BlobServiceClient(account_url=sas_token)
         if sas_token and not sas_token.startswith('https'):
             return BlobServiceClient(account_url=f"https://{conn.login}.blob.core.windows.net/" + sas_token)
-        else:
-            # Fall back to old auth
-            return BlobServiceClient(
-                account_url=f"https://{conn.login}.blob.core.windows.net/", credential=conn.password, **extra
-            )
+
+        # Fall back to old auth (password) or use managed identity if not provided.
+        credential = conn.password
+        if not credential:
+            credential = ManagedIdentityCredential()
+            self.log.info("Using managed identity as credential")
+        return BlobServiceClient(
+            account_url=f"https://{conn.login}.blob.core.windows.net/",
+            credential=credential,
+            **extra,
+        )
 
     def _get_container_client(self, container_name: str) -> ContainerClient:
         """
@@ -163,7 +172,7 @@ class WasbHook(BaseHook):
         :param blob_name: The name of the blob. This needs not be existing
         :type blob_name: str
         """
-        container_client = self.create_container(container_name)
+        container_client = self._get_container_client(container_name)
         return container_client.get_blob_client(blob_name)
 
     def check_for_blob(self, container_name: str, blob_name: str, **kwargs) -> bool:
@@ -317,7 +326,8 @@ class WasbHook(BaseHook):
             but should be supplied for optimal performance.
         :type length: int
         """
-        blob_client = self._get_blob_client(container_name, blob_name)
+        container_client = self.create_container(container_name)
+        blob_client = container_client.get_blob_client(blob_name)
         return blob_client.upload_blob(data, blob_type, length=length, **kwargs)
 
     def download(
@@ -348,13 +358,16 @@ class WasbHook(BaseHook):
         """
         container_client = self._get_container_client(container_name)
         try:
-            self.log.info('Attempting to create container: %s', container_name)
+            self.log.debug('Attempting to create container: %s', container_name)
             container_client.create_container()
             self.log.info("Created container: %s", container_name)
             return container_client
         except ResourceExistsError:
-            self.log.info("Container %s already exists", container_name)
+            self.log.debug("Container %s already exists", container_name)
             return container_client
+        except:  # noqa: E722
+            self.log.info('Error creating container: %s', container_name)
+            raise
 
     def delete_container(self, container_name: str) -> None:
         """
@@ -364,11 +377,14 @@ class WasbHook(BaseHook):
         :type container_name: str
         """
         try:
-            self.log.info('Attempting to delete container: %s', container_name)
+            self.log.debug('Attempting to delete container: %s', container_name)
             self._get_container_client(container_name).delete_container()
             self.log.info('Deleted container: %s', container_name)
         except ResourceNotFoundError:
-            self.log.info('Container %s not found', container_name)
+            self.log.info('Unable to delete container %s (not found)', container_name)
+        except:  # noqa: E722
+            self.log.info('Error deleting container: %s', container_name)
+            raise
 
     def delete_blobs(self, container_name: str, *blobs, **kwargs) -> None:
         """

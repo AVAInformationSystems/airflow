@@ -17,6 +17,7 @@
 import unittest
 from unittest import mock
 
+import pendulum
 import pytest
 from kubernetes.client.rest import ApiException
 from requests.exceptions import BaseHTTPError
@@ -72,7 +73,7 @@ class TestPodLauncher(unittest.TestCase):
             BaseHTTPError('Boom'),
             BaseHTTPError('Boom'),
         ]
-        with pytest.raises(AirflowException):
+        with pytest.raises(BaseHTTPError):
             self.pod_launcher.read_pod_logs(mock.sentinel)
 
     def test_read_pod_logs_successfully_with_tail_lines(self):
@@ -187,6 +188,29 @@ class TestPodLauncher(unittest.TestCase):
         self.mock_kube_client.read_namespaced_pod_log.return_value = iter(())
         self.pod_launcher.monitor_pod(mock.sentinel, get_logs=True)
 
+    def test_monitor_pod_logs_failures_non_fatal(self):
+        mock.sentinel.metadata = mock.MagicMock()
+        running_status = mock.MagicMock()
+        running_status.configure_mock(**{'name': 'base', 'state.running': True})
+        pod_info_running = mock.MagicMock(**{'status.container_statuses': [running_status]})
+        pod_info_succeeded = mock.MagicMock(**{'status.phase': PodStatus.SUCCEEDED})
+
+        def pod_state_gen():
+            yield pod_info_running
+            yield pod_info_running
+            while True:
+                yield pod_info_succeeded
+
+        self.mock_kube_client.read_namespaced_pod.side_effect = pod_state_gen()
+
+        def pod_log_gen():
+            while True:
+                yield BaseHTTPError('Boom')
+
+        self.mock_kube_client.read_namespaced_pod_log.side_effect = pod_log_gen()
+
+        self.pod_launcher.monitor_pod(mock.sentinel, get_logs=True)
+
     def test_read_pod_retries_fails(self):
         mock.sentinel.metadata = mock.MagicMock()
         self.mock_kube_client.read_namespaced_pod.side_effect = [
@@ -198,12 +222,15 @@ class TestPodLauncher(unittest.TestCase):
             self.pod_launcher.read_pod(mock.sentinel)
 
     def test_parse_log_line(self):
-        timestamp, message = self.pod_launcher.parse_log_line(
-            '2020-10-08T14:16:17.793417674Z Valid message\n'
-        )
+        log_message = "This should return no timestamp"
+        timestamp, line = self.pod_launcher.parse_log_line(log_message)
+        self.assertEqual(timestamp, None)
+        self.assertEqual(line, log_message)
 
-        assert timestamp == '2020-10-08T14:16:17.793417674Z'
-        assert message == 'Valid message'
+        real_timestamp = "2020-10-08T14:16:17.793417674Z"
+        timestamp, line = self.pod_launcher.parse_log_line(" ".join([real_timestamp, log_message]))
+        self.assertEqual(timestamp, pendulum.parse(real_timestamp))
+        self.assertEqual(line, log_message)
 
         with pytest.raises(Exception):
             self.pod_launcher.parse_log_line('2020-10-08T14:16:17.793417674ZInvalidmessage\n')
@@ -235,3 +262,28 @@ class TestPodLauncher(unittest.TestCase):
             self.pod_launcher.start_pod(mock.sentinel)
 
         assert mock_run_pod_async.call_count == 3
+
+    @mock.patch("airflow.providers.cncf.kubernetes.utils.pod_launcher.PodLauncher.pod_not_started")
+    @mock.patch("airflow.providers.cncf.kubernetes.utils.pod_launcher.PodLauncher.run_pod_async")
+    def test_start_pod_raises_informative_error_on_timeout(self, mock_run_pod_async, mock_pod_not_started):
+        pod_response = mock.MagicMock()
+        pod_response.status.start_time = None
+        mock_run_pod_async.return_value = pod_response
+        mock_pod_not_started.return_value = True
+        expected_msg = "Check the pod events in kubernetes"
+        with pytest.raises(AirflowException, match=expected_msg):
+            self.pod_launcher.start_pod(
+                pod=mock.sentinel,
+                startup_timeout=0,
+            )
+
+    def test_base_container_is_running_none_event(self):
+        event = mock.MagicMock()
+        event_status = mock.MagicMock()
+        event_status.status = None
+        event_container_statuses = mock.MagicMock()
+        event_container_statuses.status = mock.MagicMock()
+        event_container_statuses.status.container_statuses = None
+        for e in [event, event_status, event_container_statuses]:
+            self.pod_launcher.read_pod = mock.MagicMock(return_value=e)
+            assert self.pod_launcher.base_container_is_running(None) is False

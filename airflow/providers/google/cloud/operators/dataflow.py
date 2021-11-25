@@ -42,9 +42,9 @@ class CheckJobRunning(Enum):
     WaitForRun - wait for job to finish and then continue with new job
     """
 
-    IgnoreJob = 1  # pylint: disable=invalid-name
-    FinishIfRunning = 2  # pylint: disable=invalid-name
-    WaitForRun = 3  # pylint: disable=invalid-name
+    IgnoreJob = 1
+    FinishIfRunning = 2
+    WaitForRun = 3
 
 
 class DataflowConfiguration:
@@ -169,7 +169,6 @@ class DataflowConfiguration:
         self.check_if_running = check_if_running
 
 
-# pylint: disable=too-many-instance-attributes
 class DataflowCreateJavaJobOperator(BaseOperator):
     """
     Start a Java Cloud Dataflow batch job. The parameters of the operation
@@ -348,7 +347,6 @@ class DataflowCreateJavaJobOperator(BaseOperator):
     template_fields = ["options", "jar", "job_name"]
     ui_color = "#0273d4"
 
-    # pylint: disable=too-many-arguments
     def __init__(
         self,
         *,
@@ -370,9 +368,8 @@ class DataflowCreateJavaJobOperator(BaseOperator):
     ) -> None:
         # TODO: Remove one day
         warnings.warn(
-            "The `{cls}` operator is deprecated, please use "
-            "`providers.apache.beam.operators.beam.BeamRunJavaPipelineOperator` instead."
-            "".format(cls=self.__class__.__name__),
+            f"The `{self.__class__.__name__}` operator is deprecated, "
+            f"please use `providers.apache.beam.operators.beam.BeamRunJavaPipelineOperator` instead.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -433,34 +430,31 @@ class DataflowCreateJavaJobOperator(BaseOperator):
         with ExitStack() as exit_stack:
             if self.jar.lower().startswith("gs://"):
                 gcs_hook = GCSHook(self.gcp_conn_id, self.delegate_to)
-                tmp_gcs_file = exit_stack.enter_context(  # pylint: disable=no-member
-                    gcs_hook.provide_file(object_url=self.jar)
-                )
+                tmp_gcs_file = exit_stack.enter_context(gcs_hook.provide_file(object_url=self.jar))
                 self.jar = tmp_gcs_file.name
 
                 is_running = False
                 if self.check_if_running != CheckJobRunning.IgnoreJob:
-                    is_running = (
-                        self.dataflow_hook.is_job_dataflow_running(  # pylint: disable=no-value-for-parameter
-                            name=self.job_name,
-                            variables=pipeline_options,
-                        )
+                    is_running = self.dataflow_hook.is_job_dataflow_running(
+                        name=self.job_name,
+                        variables=pipeline_options,
                     )
                     while is_running and self.check_if_running == CheckJobRunning.WaitForRun:
-                        # pylint: disable=no-value-for-parameter
+
                         is_running = self.dataflow_hook.is_job_dataflow_running(
                             name=self.job_name,
                             variables=pipeline_options,
                         )
                 if not is_running:
                     pipeline_options["jobName"] = job_name
-                    self.beam_hook.start_java_pipeline(
-                        variables=pipeline_options,
-                        jar=self.jar,
-                        job_class=self.job_class,
-                        process_line_callback=process_line_callback,
-                    )
-                    self.dataflow_hook.wait_for_done(  # pylint: disable=no-value-for-parameter
+                    with self.dataflow_hook.provide_authorized_gcloud():
+                        self.beam_hook.start_java_pipeline(
+                            variables=pipeline_options,
+                            jar=self.jar,
+                            job_class=self.job_class,
+                            process_line_callback=process_line_callback,
+                        )
+                    self.dataflow_hook.wait_for_done(
                         job_name=job_name,
                         location=self.location,
                         job_id=self.job_id,
@@ -477,7 +471,6 @@ class DataflowCreateJavaJobOperator(BaseOperator):
             )
 
 
-# pylint: disable=too-many-instance-attributes
 class DataflowTemplatedJobStartOperator(BaseOperator):
     """
     Start a Templated Cloud Dataflow job. The parameters of the operation
@@ -634,7 +627,7 @@ class DataflowTemplatedJobStartOperator(BaseOperator):
     ]
     ui_color = "#0273d4"
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(
         self,
         *,
         template: str,
@@ -664,7 +657,7 @@ class DataflowTemplatedJobStartOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.delegate_to = delegate_to
         self.poll_sleep = poll_sleep
-        self.job_id = None
+        self.job = None
         self.hook: Optional[DataflowHook] = None
         self.impersonation_chain = impersonation_chain
         self.environment = environment
@@ -681,8 +674,8 @@ class DataflowTemplatedJobStartOperator(BaseOperator):
             wait_until_finished=self.wait_until_finished,
         )
 
-        def set_current_job_id(job_id):
-            self.job_id = job_id
+        def set_current_job(current_job):
+            self.job = current_job
 
         options = self.dataflow_default_options
         options.update(self.options)
@@ -691,7 +684,7 @@ class DataflowTemplatedJobStartOperator(BaseOperator):
             variables=options,
             parameters=self.parameters,
             dataflow_template=self.template,
-            on_new_job_id_callback=set_current_job_id,
+            on_new_job_callback=set_current_job,
             project_id=self.project_id,
             location=self.location,
             environment=self.environment,
@@ -701,8 +694,12 @@ class DataflowTemplatedJobStartOperator(BaseOperator):
 
     def on_kill(self) -> None:
         self.log.info("On kill.")
-        if self.job_id:
-            self.hook.cancel_job(job_id=self.job_id, project_id=self.project_id)
+        if self.job:
+            self.hook.cancel_job(
+                job_id=self.job.get("id"),
+                project_id=self.job.get("projectId"),
+                location=self.job.get("location"),
+            )
 
 
 class DataflowStartFlexTemplateOperator(BaseOperator):
@@ -794,7 +791,7 @@ class DataflowStartFlexTemplateOperator(BaseOperator):
         self.drain_pipeline = drain_pipeline
         self.cancel_timeout = cancel_timeout
         self.wait_until_finished = wait_until_finished
-        self.job_id = None
+        self.job = None
         self.hook: Optional[DataflowHook] = None
 
     def execute(self, context):
@@ -806,22 +803,26 @@ class DataflowStartFlexTemplateOperator(BaseOperator):
             wait_until_finished=self.wait_until_finished,
         )
 
-        def set_current_job_id(job_id):
-            self.job_id = job_id
+        def set_current_job(current_job):
+            self.job = current_job
 
         job = self.hook.start_flex_template(
             body=self.body,
             location=self.location,
             project_id=self.project_id,
-            on_new_job_id_callback=set_current_job_id,
+            on_new_job_callback=set_current_job,
         )
 
         return job
 
     def on_kill(self) -> None:
         self.log.info("On kill.")
-        if self.job_id:
-            self.hook.cancel_job(job_id=self.job_id, project_id=self.project_id)
+        if self.job:
+            self.hook.cancel_job(
+                job_id=self.job.get("id"),
+                project_id=self.job.get("projectId"),
+                location=self.job.get("location"),
+            )
 
 
 class DataflowStartSqlJobOperator(BaseOperator):
@@ -897,7 +898,7 @@ class DataflowStartSqlJobOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.delegate_to = delegate_to
         self.drain_pipeline = drain_pipeline
-        self.job_id = None
+        self.job = None
         self.hook: Optional[DataflowHook] = None
 
     def execute(self, context):
@@ -907,8 +908,8 @@ class DataflowStartSqlJobOperator(BaseOperator):
             drain_pipeline=self.drain_pipeline,
         )
 
-        def set_current_job_id(job_id):
-            self.job_id = job_id
+        def set_current_job(current_job):
+            self.job = current_job
 
         job = self.hook.start_sql_job(
             job_name=self.job_name,
@@ -916,18 +917,21 @@ class DataflowStartSqlJobOperator(BaseOperator):
             options=self.options,
             location=self.location,
             project_id=self.project_id,
-            on_new_job_id_callback=set_current_job_id,
+            on_new_job_callback=set_current_job,
         )
 
         return job
 
     def on_kill(self) -> None:
         self.log.info("On kill.")
-        if self.job_id:
-            self.hook.cancel_job(job_id=self.job_id, project_id=self.project_id)
+        if self.job:
+            self.hook.cancel_job(
+                job_id=self.job.get("id"),
+                project_id=self.job.get("projectId"),
+                location=self.job.get("location"),
+            )
 
 
-# pylint: disable=too-many-instance-attributes
 class DataflowCreatePythonJobOperator(BaseOperator):
     """
     Launching Cloud Dataflow jobs written in python. Note that both
@@ -1047,7 +1051,7 @@ class DataflowCreatePythonJobOperator(BaseOperator):
 
     template_fields = ["options", "dataflow_default_options", "job_name", "py_file"]
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(
         self,
         *,
         py_file: str,
@@ -1070,9 +1074,8 @@ class DataflowCreatePythonJobOperator(BaseOperator):
     ) -> None:
         # TODO: Remove one day
         warnings.warn(
-            "The `{cls}` operator is deprecated, please use "
-            "`providers.apache.beam.operators.beam.BeamRunPythonPipelineOperator` instead."
-            "".format(cls=self.__class__.__name__),
+            f"The `{self.__class__.__name__}` operator is deprecated, "
+            "please use `providers.apache.beam.operators.beam.BeamRunPythonPipelineOperator` instead.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -1135,22 +1138,21 @@ class DataflowCreatePythonJobOperator(BaseOperator):
         with ExitStack() as exit_stack:
             if self.py_file.lower().startswith("gs://"):
                 gcs_hook = GCSHook(self.gcp_conn_id, self.delegate_to)
-                tmp_gcs_file = exit_stack.enter_context(  # pylint: disable=no-member
-                    gcs_hook.provide_file(object_url=self.py_file)
-                )
+                tmp_gcs_file = exit_stack.enter_context(gcs_hook.provide_file(object_url=self.py_file))
                 self.py_file = tmp_gcs_file.name
 
-            self.beam_hook.start_python_pipeline(
-                variables=formatted_pipeline_options,
-                py_file=self.py_file,
-                py_options=self.py_options,
-                py_interpreter=self.py_interpreter,
-                py_requirements=self.py_requirements,
-                py_system_site_packages=self.py_system_site_packages,
-                process_line_callback=process_line_callback,
-            )
+            with self.dataflow_hook.provide_authorized_gcloud():
+                self.beam_hook.start_python_pipeline(
+                    variables=formatted_pipeline_options,
+                    py_file=self.py_file,
+                    py_options=self.py_options,
+                    py_interpreter=self.py_interpreter,
+                    py_requirements=self.py_requirements,
+                    py_system_site_packages=self.py_system_site_packages,
+                    process_line_callback=process_line_callback,
+                )
 
-            self.dataflow_hook.wait_for_done(  # pylint: disable=no-value-for-parameter
+            self.dataflow_hook.wait_for_done(
                 job_name=job_name,
                 location=self.location,
                 job_id=self.job_id,

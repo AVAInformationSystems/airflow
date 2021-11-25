@@ -20,13 +20,11 @@
 import json
 from typing import Optional, Sequence, Union
 
-from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
 
-# pylint: disable=too-many-instance-attributes
 class GCSToBigQueryOperator(BaseOperator):
     """
     Loads files from Google Cloud Storage into BigQuery.
@@ -172,7 +170,6 @@ class GCSToBigQueryOperator(BaseOperator):
     template_ext = ('.sql',)
     ui_color = '#f0eee4'
 
-    # pylint: disable=too-many-locals,too-many-arguments
     def __init__(
         self,
         *,
@@ -276,10 +273,6 @@ class GCSToBigQueryOperator(BaseOperator):
                     object_name=self.schema_object,
                 )
                 schema_fields = json.loads(blob.decode("utf-8"))
-            elif self.schema_object is None and self.autodetect is False:
-                raise AirflowException(
-                    'At least one of `schema_fields`, `schema_object`, or `autodetect` must be passed.'
-                )
             else:
                 schema_fields = None
 

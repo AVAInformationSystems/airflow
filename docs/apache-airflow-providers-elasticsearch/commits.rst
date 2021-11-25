@@ -20,7 +20,7 @@
 Package apache-airflow-providers-elasticsearch
 ------------------------------------------------------
 
-`Elasticsearch <https://https//www.elastic.co/elasticsearch>`__
+`Elasticsearch <https://www.elastic.co/elasticsearch>`__
 
 
 This is detailed commit list of changes for versions provider package: ``elasticsearch``.
@@ -28,14 +28,78 @@ For high-level changelog, see :doc:`package information including changelog <ind
 
 
 
+2.1.0
+.....
+
+Latest change: 2021-09-30
+
+================================================================================================  ===========  ===========================================================================
+Commit                                                                                            Committed    Subject
+================================================================================================  ===========  ===========================================================================
+`840ea3efb <https://github.com/apache/airflow/commit/840ea3efb9533837e9f36b75fa527a0fbafeb23a>`_  2021-09-30   ``Update documentation for September providers release (#18613)``
+`de9b02f79 <https://github.com/apache/airflow/commit/de9b02f797931efbd081996b4f81ba14ca76a17d>`_  2021-09-28   ``Updating the Elasticsearch example DAG to use the TaskFlow API (#18565)``
+`060345c0d <https://github.com/apache/airflow/commit/060345c0d982765e39da5fa8b2e2c6a01e89e394>`_  2021-09-21   ``Add docs for AIP 39: Timetables (#17552)``
+`a0a05ffed <https://github.com/apache/airflow/commit/a0a05ffeddab54199e43b76016703c7ccaed3cd1>`_  2021-09-04   ``Adds example showing the ES_hook (#17944)``
+================================================================================================  ===========  ===========================================================================
+
+2.0.3
+.....
+
+Latest change: 2021-08-30
+
+================================================================================================  ===========  ============================================================================
+Commit                                                                                            Committed    Subject
+================================================================================================  ===========  ============================================================================
+`0a6858847 <https://github.com/apache/airflow/commit/0a68588479e34cf175d744ea77b283d9d78ea71a>`_  2021-08-30   ``Add August 2021 Provider's documentation (#17890)``
+`be75dcd39 <https://github.com/apache/airflow/commit/be75dcd39cd10264048c86e74110365bd5daf8b7>`_  2021-08-23   ``Update description about the new ''connection-types'' provider meta-data``
+`76ed2a49c <https://github.com/apache/airflow/commit/76ed2a49c6cd285bf59706cf04f39a7444c382c9>`_  2021-08-19   ``Import Hooks lazily individually in providers manager (#17682)``
+`29aab6434 <https://github.com/apache/airflow/commit/29aab6434ffe0fb8c83b6fd6c9e44310966d496a>`_  2021-08-17   ``Adds secrets backend/logging/auth information to provider yaml (#17625)``
+`944dc32c2 <https://github.com/apache/airflow/commit/944dc32c2b4a758564259133a08f2ea8d28dcb6c>`_  2021-08-12   ``Fix Invalid log order in ElasticsearchTaskHandler (#17551)``
+================================================================================================  ===========  ============================================================================
+
+2.0.2
+.....
+
+Latest change: 2021-06-28
+
+================================================================================================  ===========  ===========================================================
+Commit                                                                                            Committed    Subject
+================================================================================================  ===========  ===========================================================
+`866a601b7 <https://github.com/apache/airflow/commit/866a601b76e219b3c043e1dbbc8fb22300866351>`_  2021-06-28   ``Removes pylint from our toolchain (#16682)``
+`6f445e69c <https://github.com/apache/airflow/commit/6f445e69c3c9d95bff18f327aeeab126cc36a6e1>`_  2021-06-26   ``Update release documentation for elasticsearch (#16662)``
+================================================================================================  ===========  ===========================================================
+
+2.0.1
+.....
+
+Latest change: 2021-06-18
+
+================================================================================================  ===========  =====================================================================
+Commit                                                                                            Committed    Subject
+================================================================================================  ===========  =====================================================================
+`bbc627a3d <https://github.com/apache/airflow/commit/bbc627a3dab17ba4cf920dd1a26dbed6f5cebfd1>`_  2021-06-18   ``Prepares documentation for rc2 release of Providers (#16501)``
+`3cf67be38 <https://github.com/apache/airflow/commit/3cf67be3875fa0b91408ed0433779970e4f6acf5>`_  2021-06-16   ``Support non-https elasticsearch external links (#16489)``
+`247ba3187 <https://github.com/apache/airflow/commit/247ba31872aa5a8a9e92f781a6beba75945ece1b>`_  2021-06-16   ``Fix Elasticsearch external log link with ''json_format'' (#16467)``
+`5e12b3de3 <https://github.com/apache/airflow/commit/5e12b3de31dd1cf3d6e5088edbf497f91dcae4d8>`_  2021-06-16   ``Remove support jinja templated log_id in elasticsearch (#16465)``
+`cbf8001d7 <https://github.com/apache/airflow/commit/cbf8001d7630530773f623a786f9eb319783b33c>`_  2021-06-16   ``Synchronizes updated changelog after buggfix release (#16464)``
+`e31e515b2 <https://github.com/apache/airflow/commit/e31e515b28a745b7428b42f1559ab456305fb3a0>`_  2021-06-15   ``Fix external elasticsearch logs link (#16357)``
+`1fba5402b <https://github.com/apache/airflow/commit/1fba5402bb14b3ffa6429fdc683121935f88472f>`_  2021-06-15   ``More documentation update for June providers release (#16405)``
+`e8d3de828 <https://github.com/apache/airflow/commit/e8d3de828f834ea9527c8d3d0d434675c0b3ee41>`_  2021-06-15   ``Add ElasticSearch Connection Doc (#16436)``
+`5cd0bf733 <https://github.com/apache/airflow/commit/5cd0bf733b839951c075c54e808a595ac923c4e8>`_  2021-06-11   ``Support remote logging in elasticsearch with filebeat 7 (#14625)``
+`9c94b72d4 <https://github.com/apache/airflow/commit/9c94b72d440b18a9e42123d20d48b951712038f9>`_  2021-06-07   ``Updated documentation for June 2021 provider release (#16294)``
+`3bdcd1a7d <https://github.com/apache/airflow/commit/3bdcd1a7d46ca06115a93b97f394486e0acaf52d>`_  2021-06-05   ``Docs: Fix url for ''Elasticsearch'' (#16275)``
+`476d0f6e3 <https://github.com/apache/airflow/commit/476d0f6e3d2059f56532cda36cdc51aa86bafb37>`_  2021-05-22   ``Bump pyupgrade v2.13.0 to v2.18.1 (#15991)``
+================================================================================================  ===========  =====================================================================
+
 1.0.4
 .....
 
-Latest change: 2021-04-27
+Latest change: 2021-05-01
 
 ================================================================================================  ===========  =============================================================================
 Commit                                                                                            Committed    Subject
 ================================================================================================  ===========  =============================================================================
+`807ad32ce <https://github.com/apache/airflow/commit/807ad32ce59e001cb3532d98a05fa7d0d7fabb95>`_  2021-05-01   ``Prepares provider release after PIP 21 compatibility (#15576)``
 `657384615 <https://github.com/apache/airflow/commit/657384615fafc060f9e2ed925017306705770355>`_  2021-04-27   ``Fix 'logging.exception' redundancy (#14823)``
 `71c673e42 <https://github.com/apache/airflow/commit/71c673e427a89cae2a9f3174c32c5c85556d6342>`_  2021-04-22   ``Update Docstrings of Modules with Missing Params (#15391)``
 `5da831910 <https://github.com/apache/airflow/commit/5da831910c358ecbd7a5c33ee31fe0d909508bea>`_  2021-04-10   ``Fix exception caused by missing keys in the ElasticSearch Record (#15163)``

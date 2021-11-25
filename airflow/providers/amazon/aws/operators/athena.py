@@ -32,6 +32,10 @@ class AWSAthenaOperator(BaseOperator):
     """
     An operator that submits a presto query to athena.
 
+    .. seealso::
+        For more information on how to use this operator, take a look at the guide:
+        :ref:`howto/operator:AWSAthenaOperator`
+
     :param query: Presto to be run on athena. (templated)
     :type query: str
     :param database: Database to select. (templated)
@@ -59,7 +63,7 @@ class AWSAthenaOperator(BaseOperator):
     template_ext = ('.sql',)
     template_fields_renderers = {"query": "sql"}
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(
         self,
         *,
         query: str,
@@ -108,16 +112,13 @@ class AWSAthenaOperator(BaseOperator):
         if query_status in AWSAthenaHook.FAILURE_STATES:
             error_message = self.hook.get_state_change_reason(self.query_execution_id)
             raise Exception(
-                'Final state of Athena job is {}, query_execution_id is {}. Error: {}'.format(
-                    query_status, self.query_execution_id, error_message
-                )
+                f'Final state of Athena job is {query_status}, query_execution_id is '
+                f'{self.query_execution_id}. Error: {error_message}'
             )
         elif not query_status or query_status in AWSAthenaHook.INTERMEDIATE_STATES:
             raise Exception(
-                'Final state of Athena job is {}. '
-                'Max tries of poll status exceeded, query_execution_id is {}.'.format(
-                    query_status, self.query_execution_id
-                )
+                f'Final state of Athena job is {query_status}. Max tries of poll status exceeded, '
+                f'query_execution_id is {self.query_execution_id}.'
             )
 
         return self.query_execution_id
@@ -131,7 +132,7 @@ class AWSAthenaOperator(BaseOperator):
             http_status_code = None
             try:
                 http_status_code = response['ResponseMetadata']['HTTPStatusCode']
-            except Exception as ex:  # pylint: disable=broad-except
+            except Exception as ex:
                 self.log.error('Exception while cancelling query: %s', ex)
             finally:
                 if http_status_code is None or http_status_code != 200:

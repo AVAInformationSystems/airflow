@@ -162,6 +162,7 @@ class TestPythonOperator(TestPythonBase):
         self.dag.create_dagrun(
             run_type=DagRunType.MANUAL,
             execution_date=DEFAULT_DATE,
+            data_interval=(DEFAULT_DATE, DEFAULT_DATE),
             start_date=DEFAULT_DATE,
             state=State.RUNNING,
         )
@@ -199,6 +200,7 @@ class TestPythonOperator(TestPythonBase):
         self.dag.create_dagrun(
             run_type=DagRunType.MANUAL,
             execution_date=DEFAULT_DATE,
+            data_interval=(DEFAULT_DATE, DEFAULT_DATE),
             start_date=DEFAULT_DATE,
             state=State.RUNNING,
         )
@@ -210,9 +212,7 @@ class TestPythonOperator(TestPythonBase):
             Call(
                 an_int=4,
                 a_date=date(2019, 1, 1),
-                a_templated_string="dag {} ran on {}.".format(
-                    self.dag.dag_id, DEFAULT_DATE.date().isoformat()
-                ),
+                a_templated_string=f"dag {self.dag.dag_id} ran on {DEFAULT_DATE.date().isoformat()}.",
             ),
         )
 
@@ -314,6 +314,56 @@ class TestPythonOperator(TestPythonBase):
         )
         python_operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
 
+    def test_return_value_log_with_show_return_value_in_logs_default(self):
+        self.dag.create_dagrun(
+            run_type=DagRunType.MANUAL,
+            execution_date=DEFAULT_DATE,
+            start_date=DEFAULT_DATE,
+            state=State.RUNNING,
+            external_trigger=False,
+        )
+
+        def func():
+            return 'test_return_value'
+
+        python_operator = PythonOperator(task_id='python_operator', python_callable=func, dag=self.dag)
+
+        with self.assertLogs('airflow.task.operators', level=logging.INFO) as cm:
+            python_operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+
+        assert (
+            'INFO:airflow.task.operators:Done. Returned value was: test_return_value' in cm.output
+        ), 'Return value should be shown'
+
+    def test_return_value_log_with_show_return_value_in_logs_false(self):
+        self.dag.create_dagrun(
+            run_type=DagRunType.MANUAL,
+            execution_date=DEFAULT_DATE,
+            start_date=DEFAULT_DATE,
+            state=State.RUNNING,
+            external_trigger=False,
+        )
+
+        def func():
+            return 'test_return_value'
+
+        python_operator = PythonOperator(
+            task_id='python_operator',
+            python_callable=func,
+            dag=self.dag,
+            show_return_value_in_logs=False,
+        )
+
+        with self.assertLogs('airflow.task.operators', level=logging.INFO) as cm:
+            python_operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+
+        assert (
+            'INFO:airflow.task.operators:Done. Returned value was: test_return_value' not in cm.output
+        ), 'Return value should not be shown'
+        assert (
+            'INFO:airflow.task.operators:Done. Returned value not shown' in cm.output
+        ), 'Log message that the option is turned off should be shown'
+
 
 class TestBranchOperator(unittest.TestCase):
     @classmethod
@@ -341,60 +391,6 @@ class TestBranchOperator(unittest.TestCase):
         with create_session() as session:
             session.query(DagRun).delete()
             session.query(TI).delete()
-
-    def test_without_dag_run(self):
-        """This checks the defensive against non existent tasks in a dag run"""
-        branch_op = BranchPythonOperator(
-            task_id='make_choice', dag=self.dag, python_callable=lambda: 'branch_1'
-        )
-        self.branch_1.set_upstream(branch_op)
-        self.branch_2.set_upstream(branch_op)
-        self.dag.clear()
-
-        branch_op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
-
-        with create_session() as session:
-            tis = session.query(TI).filter(TI.dag_id == self.dag.dag_id, TI.execution_date == DEFAULT_DATE)
-
-            for ti in tis:
-                if ti.task_id == 'make_choice':
-                    assert ti.state == State.SUCCESS
-                elif ti.task_id == 'branch_1':
-                    # should exist with state None
-                    assert ti.state == State.NONE
-                elif ti.task_id == 'branch_2':
-                    assert ti.state == State.SKIPPED
-                else:
-                    raise ValueError(f'Invalid task id {ti.task_id} found!')
-
-    def test_branch_list_without_dag_run(self):
-        """This checks if the BranchPythonOperator supports branching off to a list of tasks."""
-        branch_op = BranchPythonOperator(
-            task_id='make_choice', dag=self.dag, python_callable=lambda: ['branch_1', 'branch_2']
-        )
-        self.branch_1.set_upstream(branch_op)
-        self.branch_2.set_upstream(branch_op)
-        self.branch_3 = DummyOperator(task_id='branch_3', dag=self.dag)
-        self.branch_3.set_upstream(branch_op)
-        self.dag.clear()
-
-        branch_op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
-
-        with create_session() as session:
-            tis = session.query(TI).filter(TI.dag_id == self.dag.dag_id, TI.execution_date == DEFAULT_DATE)
-
-            expected = {
-                "make_choice": State.SUCCESS,
-                "branch_1": State.NONE,
-                "branch_2": State.NONE,
-                "branch_3": State.SKIPPED,
-            }
-
-            for ti in tis:
-                if ti.task_id in expected:
-                    assert ti.state == expected[ti.task_id]
-                else:
-                    raise ValueError(f'Invalid task id {ti.task_id} found!')
 
     def test_with_dag_run(self):
         branch_op = BranchPythonOperator(
@@ -562,6 +558,24 @@ class TestBranchOperator(unittest.TestCase):
             else:
                 raise ValueError(f'Invalid task id {ti.task_id} found!')
 
+    def test_raise_exception_on_no_task_id_return(self):
+        branch_op = BranchPythonOperator(task_id='make_choice', dag=self.dag, python_callable=lambda: None)
+        self.dag.clear()
+        with pytest.raises(AirflowException) as ctx:
+            branch_op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+        assert 'Branch callable must return either a task ID or a list of IDs' == str(ctx.value)
+
+    def test_raise_exception_on_invalid_task_id(self):
+        branch_op = BranchPythonOperator(
+            task_id='make_choice', dag=self.dag, python_callable=lambda: 'some_task_id'
+        )
+        self.dag.clear()
+        with pytest.raises(AirflowException) as ctx:
+            branch_op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+        assert """Branch callable must return valid task_ids. Invalid tasks found: {'some_task_id'}""" == str(
+            ctx.value
+        )
+
 
 class TestShortCircuitOperator(unittest.TestCase):
     @classmethod
@@ -578,54 +592,6 @@ class TestShortCircuitOperator(unittest.TestCase):
         with create_session() as session:
             session.query(DagRun).delete()
             session.query(TI).delete()
-
-    def test_without_dag_run(self):
-        """This checks the defensive against non existent tasks in a dag run"""
-        value = False
-        dag = DAG(
-            'shortcircuit_operator_test_without_dag_run',
-            default_args={'owner': 'airflow', 'start_date': DEFAULT_DATE},
-            schedule_interval=INTERVAL,
-        )
-        short_op = ShortCircuitOperator(task_id='make_choice', dag=dag, python_callable=lambda: value)
-        branch_1 = DummyOperator(task_id='branch_1', dag=dag)
-        branch_1.set_upstream(short_op)
-        branch_2 = DummyOperator(task_id='branch_2', dag=dag)
-        branch_2.set_upstream(branch_1)
-        upstream = DummyOperator(task_id='upstream', dag=dag)
-        upstream.set_downstream(short_op)
-        dag.clear()
-
-        short_op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
-
-        with create_session() as session:
-            tis = session.query(TI).filter(TI.dag_id == dag.dag_id, TI.execution_date == DEFAULT_DATE)
-
-            for ti in tis:
-                if ti.task_id == 'make_choice':
-                    assert ti.state == State.SUCCESS
-                elif ti.task_id == 'upstream':
-                    # should not exist
-                    raise ValueError(f'Invalid task id {ti.task_id} found!')
-                elif ti.task_id == 'branch_1' or ti.task_id == 'branch_2':
-                    assert ti.state == State.SKIPPED
-                else:
-                    raise ValueError(f'Invalid task id {ti.task_id} found!')
-
-            value = True
-            dag.clear()
-
-            short_op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
-            for ti in tis:
-                if ti.task_id == 'make_choice':
-                    assert ti.state == State.SUCCESS
-                elif ti.task_id == 'upstream':
-                    # should not exist
-                    raise ValueError(f'Invalid task id {ti.task_id} found!')
-                elif ti.task_id == 'branch_1' or ti.task_id == 'branch_2':
-                    assert ti.state == State.NONE
-                else:
-                    raise ValueError(f'Invalid task id {ti.task_id} found!')
 
     def test_with_dag_run(self):
         value = False
@@ -789,7 +755,7 @@ class TestPythonVirtualenvOperator(unittest.TestCase):
     def test_no_system_site_packages(self):
         def f():
             try:
-                import funcsigs  # noqa: F401  # pylint: disable=redefined-outer-name,reimported,unused-import
+                import funcsigs  # noqa: F401
             except ImportError:
                 return True
             raise Exception
@@ -798,13 +764,13 @@ class TestPythonVirtualenvOperator(unittest.TestCase):
 
     def test_system_site_packages(self):
         def f():
-            import funcsigs  # noqa: F401  # pylint: disable=redefined-outer-name,reimported,unused-import
+            import funcsigs  # noqa: F401
 
         self._run_as_operator(f, requirements=['funcsigs'], system_site_packages=True)
 
     def test_with_requirements_pinned(self):
         def f():
-            import funcsigs  # noqa: F401  # pylint: disable=redefined-outer-name,reimported
+            import funcsigs
 
             if funcsigs.__version__ != '0.4':
                 raise Exception
@@ -813,13 +779,13 @@ class TestPythonVirtualenvOperator(unittest.TestCase):
 
     def test_unpinned_requirements(self):
         def f():
-            import funcsigs  # noqa: F401  # pylint: disable=redefined-outer-name,reimported,unused-import
+            import funcsigs  # noqa: F401
 
         self._run_as_operator(f, requirements=['funcsigs', 'dill'], system_site_packages=False)
 
     def test_range_requirements(self):
         def f():
-            import funcsigs  # noqa: F401  # pylint: disable=redefined-outer-name,reimported,unused-import
+            import funcsigs  # noqa: F401
 
         self._run_as_operator(f, requirements=['funcsigs>1.0', 'dill'], system_site_packages=False)
 
@@ -832,24 +798,24 @@ class TestPythonVirtualenvOperator(unittest.TestCase):
 
     def test_python_2(self):
         def f():
-            {}.iteritems()  # pylint: disable=no-member
+            {}.iteritems()
 
         self._run_as_operator(f, python_version=2, requirements=['dill'])
 
     def test_python_2_7(self):
         def f():
-            {}.iteritems()  # pylint: disable=no-member
+            {}.iteritems()
             return True
 
         self._run_as_operator(f, python_version='2.7', requirements=['dill'])
 
     def test_python_3(self):
         def f():
-            import sys  # pylint: disable=reimported,unused-import,redefined-outer-name
+            import sys
 
             print(sys.version)
             try:
-                {}.iteritems()  # pylint: disable=no-member
+                {}.iteritems()
             except AttributeError:
                 return
             raise Exception
@@ -883,7 +849,7 @@ class TestPythonVirtualenvOperator(unittest.TestCase):
 
     def test_string_args(self):
         def f():
-            global virtualenv_string_args  # pylint: disable=global-statement
+            global virtualenv_string_args
             print(virtualenv_string_args)
             if virtualenv_string_args[0] != virtualenv_string_args[2]:
                 raise Exception
@@ -929,6 +895,9 @@ class TestPythonVirtualenvOperator(unittest.TestCase):
 
         self._run_as_operator(f, templates_dict={'ds': '{{ ds }}'})
 
+    # This tests might take longer than default 60 seconds as it is serializing a lot of
+    # context using dill (which is slow apparently).
+    @pytest.mark.execution_timeout(120)
     def test_airflow_context(self):
         def f(
             # basic
@@ -964,7 +933,7 @@ class TestPythonVirtualenvOperator(unittest.TestCase):
             task,
             # other
             **context,
-        ):  # pylint: disable=unused-argument,too-many-arguments,too-many-locals
+        ):
             pass
 
         self._run_as_operator(f, use_dill=True, system_site_packages=True, requirements=None)
@@ -977,7 +946,6 @@ class TestPythonVirtualenvOperator(unittest.TestCase):
             next_ds,
             next_ds_nodash,
             outlets,
-            params,
             prev_ds,
             prev_ds_nodash,
             run_id,
@@ -998,7 +966,7 @@ class TestPythonVirtualenvOperator(unittest.TestCase):
             prev_start_date_success,
             # other
             **context,
-        ):  # pylint: disable=unused-argument,too-many-arguments,too-many-locals
+        ):
             pass
 
         self._run_as_operator(
@@ -1013,7 +981,6 @@ class TestPythonVirtualenvOperator(unittest.TestCase):
             next_ds,
             next_ds_nodash,
             outlets,
-            params,
             prev_ds,
             prev_ds_nodash,
             run_id,
@@ -1028,7 +995,7 @@ class TestPythonVirtualenvOperator(unittest.TestCase):
             yesterday_ds_nodash,
             # other
             **context,
-        ):  # pylint: disable=unused-argument,too-many-arguments,too-many-locals
+        ):
             pass
 
         self._run_as_operator(f, use_dill=True, system_site_packages=False, requirements=None)
@@ -1092,7 +1059,7 @@ class TestCurrentContext:
             new_context = {"ContextId": i}
             # Like 15 nested with statements
             ctx_obj = set_current_context(new_context)
-            ctx_obj.__enter__()  # pylint: disable=E1101
+            ctx_obj.__enter__()
             ctx_list.append(ctx_obj)
         for i in reversed(range(max_stack_depth)):
             # Iterate over contexts in reverse order - stack is LIFO
@@ -1139,29 +1106,30 @@ class TestCurrentContextRuntime:
         ("join", [State.SUCCESS, State.SKIPPED, State.SUCCESS]),
     ],
 )
-def test_empty_branch(choice, expected_states):
+def test_empty_branch(dag_maker, choice, expected_states):
     """
     Tests that BranchPythonOperator handles empty branches properly.
     """
-    with DAG(
+    with dag_maker(
         'test_empty_branch',
         start_date=DEFAULT_DATE,
     ) as dag:
         branch = BranchPythonOperator(task_id='branch', python_callable=lambda: choice)
         task1 = DummyOperator(task_id='task1')
-        join = DummyOperator(task_id='join', trigger_rule="none_failed_or_skipped")
+        join = DummyOperator(task_id='join', trigger_rule="none_failed_min_one_success")
 
         branch >> [task1, join]
         task1 >> join
 
     dag.clear(start_date=DEFAULT_DATE)
+    dag_run = dag_maker.create_dagrun()
 
     task_ids = ["branch", "task1", "join"]
+    tis = {ti.task_id: ti for ti in dag_run.task_instances}
 
-    tis = {}
-    for task_id in task_ids:
-        task_instance = TI(dag.get_task(task_id), execution_date=DEFAULT_DATE)
-        tis[task_id] = task_instance
+    for task_id in task_ids:  # Mimic the specific order the scheduling would run the tests.
+        task_instance = tis[task_id]
+        task_instance.refresh_from_task(dag.get_task(task_id))
         task_instance.run()
 
     def get_state(ti):
@@ -1169,3 +1137,36 @@ def test_empty_branch(choice, expected_states):
         return ti.state
 
     assert [get_state(tis[task_id]) for task_id in task_ids] == expected_states
+
+
+def test_virtualenv_serializable_context_fields(create_task_instance):
+    """Ensure all template context fields are listed in the operator.
+
+    This exists mainly so when a field is added to the context, we remember to
+    also add it to PythonVirtualenvOperator.
+    """
+    # These are intentionally NOT serialized into the virtual environment:
+    # * Variables pointing to the task instance itself.
+    # * Variables that are accessor instances.
+    intentionally_excluded_context_keys = [
+        "task_instance",
+        "ti",
+        "var",  # Accessor for Variable; var->json and var->value.
+        "conn",  # Accessor for Connection.
+    ]
+
+    ti = create_task_instance(
+        dag_id="test_virtualenv_serializable_context_fields",
+        task_id="test_virtualenv_serializable_context_fields_task",
+        schedule_interval=None,
+    )
+    context = ti.get_template_context()
+
+    declared_keys = {
+        *PythonVirtualenvOperator.BASE_SERIALIZABLE_CONTEXT_KEYS,
+        *PythonVirtualenvOperator.PENDULUM_SERIALIZABLE_CONTEXT_KEYS,
+        *PythonVirtualenvOperator.AIRFLOW_SERIALIZABLE_CONTEXT_KEYS,
+        *intentionally_excluded_context_keys,
+    }
+
+    assert set(context) == declared_keys

@@ -63,7 +63,6 @@ log = logging.getLogger(__name__)
 BigQueryJob = Union[CopyJob, QueryJob, LoadJob, ExtractJob]
 
 
-# pylint: disable=too-many-public-methods
 class BigQueryHook(GoogleBaseHook, DbApiHook):
     """
     Interact with BigQuery. This hook uses the Google Cloud connection.
@@ -88,13 +87,13 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
     """
 
     conn_name_attr = 'gcp_conn_id'
-    default_conn_name = 'google_cloud_default'
-    conn_type = 'google_cloud_platform'
-    hook_name = 'Google Cloud'
+    default_conn_name = 'google_cloud_bigquery_default'
+    conn_type = 'gcpbigquery'
+    hook_name = 'Google Bigquery'
 
     def __init__(
         self,
-        gcp_conn_id: str = default_conn_name,
+        gcp_conn_id: str = GoogleBaseHook.default_conn_name,
         delegate_to: Optional[str] = None,
         use_legacy_sql: bool = True,
         location: Optional[str] = None,
@@ -285,7 +284,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
             return False
 
     @GoogleBaseHook.fallback_to_default_project_id
-    def create_empty_table(  # pylint: disable=too-many-arguments
+    def create_empty_table(
         self,
         project_id: Optional[str] = None,
         dataset_id: Optional[str] = None,
@@ -533,7 +532,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         )
 
     @GoogleBaseHook.fallback_to_default_project_id
-    def create_external_table(  # pylint: disable=too-many-locals,too-many-arguments
+    def create_external_table(
         self,
         external_project_dataset_table: str,
         schema_fields: List,
@@ -623,7 +622,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         :param labels: A dictionary containing labels for the BiqQuery table.
         :type labels: dict
         :param description: A string containing the description for the BigQuery table.
-        :type descriptin: str
+        :type description: str
         :param encryption_configuration: [Optional] Custom encryption configuration (e.g., Cloud KMS keys).
             **Example**: ::
 
@@ -633,8 +632,8 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         :type encryption_configuration: dict
         """
         warnings.warn(
-            "This method is deprecated. Please use `BigQueryHook.create_empty_table` method with"
-            "pass passing the `table_resource` object. This gives more flexibility than this method.",
+            "This method is deprecated. Please use `BigQueryHook.create_empty_table` method with "
+            "passing the `table_resource` object. This gives more flexibility than this method.",
             DeprecationWarning,
         )
         location = location or self.location
@@ -753,7 +752,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         return table_object.to_api_repr()
 
     @GoogleBaseHook.fallback_to_default_project_id
-    def patch_table(  # pylint: disable=too-many-arguments
+    def patch_table(
         self,
         dataset_id: str,
         table_id: str,
@@ -1003,8 +1002,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         project_id = project_id or self.project_id
         if not dataset_id or not isinstance(dataset_id, str):
             raise ValueError(
-                "dataset_id argument must be provided and has "
-                "a type 'str'. You provided: {}".format(dataset_id)
+                f"dataset_id argument must be provided and has a type 'str'. You provided: {dataset_id}"
             )
 
         service = self.get_service()
@@ -1012,7 +1010,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
 
         self.log.info('Start patching dataset: %s:%s', dataset_project_id, dataset_id)
         dataset = (
-            service.datasets()  # pylint: disable=no-member
+            service.datasets()
             .patch(
                 datasetId=dataset_id,
                 projectId=dataset_project_id,
@@ -1423,7 +1421,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
             # Turn schema_field_updates into a dict keyed on field names
             schema_fields_updates = {field["name"]: field for field in deepcopy(schema_fields_updates)}
 
-            # Create a new dict for storing the new schema, initated based on the current_schema
+            # Create a new dict for storing the new schema, initiated based on the current_schema
             # as of Python 3.6, dicts retain order.
             new_schema = {field["name"]: field for field in deepcopy(current_schema)}
 
@@ -1619,14 +1617,14 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
             "configuration": configuration,
             "jobReference": {"jobId": job_id, "projectId": project_id, "location": location},
         }
-        # pylint: disable=protected-access
+
         supported_jobs = {
             LoadJob._JOB_TYPE: LoadJob,
             CopyJob._JOB_TYPE: CopyJob,
             ExtractJob._JOB_TYPE: ExtractJob,
             QueryJob._JOB_TYPE: QueryJob,
         }
-        # pylint: enable=protected-access
+
         job = None
         for job_type, job_object in supported_jobs.items():
             if job_type in configuration:
@@ -1659,7 +1657,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         self.running_job_id = job.job_id
         return job.job_id
 
-    def run_load(  # pylint: disable=too-many-locals,too-many-arguments,invalid-name
+    def run_load(
         self,
         destination_project_dataset_table: str,
         source_uris: List,
@@ -1784,7 +1782,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         # we check to make sure the passed source format is valid
         # if it's not, we raise a ValueError
         # Refer to this link for more details:
-        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.tableDefinitions.(key).sourceFormat # noqa # pylint: disable=line-too-long
+        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.tableDefinitions.(key).sourceFormat # noqa
 
         if schema_fields is None and not autodetect:
             raise ValueError('You must either pass a schema or autodetect=True.')
@@ -1803,8 +1801,8 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         ]
         if source_format not in allowed_formats:
             raise ValueError(
-                "{} is not a valid source format. "
-                "Please use one of the following types: {}".format(source_format, allowed_formats)
+                f"{source_format} is not a valid source format. "
+                f"Please use one of the following types: {allowed_formats}."
             )
 
         # bigquery also allows you to define how you want a table's schema to change
@@ -1814,10 +1812,8 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         allowed_schema_update_options = ['ALLOW_FIELD_ADDITION', "ALLOW_FIELD_RELAXATION"]
         if not set(allowed_schema_update_options).issuperset(set(schema_update_options)):
             raise ValueError(
-                "{} contains invalid schema update options."
-                "Please only use one or more of the following options: {}".format(
-                    schema_update_options, allowed_schema_update_options
-                )
+                f"{schema_update_options} contains invalid schema update options. "
+                f"Please only use one or more of the following options: {allowed_schema_update_options}"
             )
 
         destination_project, destination_dataset, destination_table = _split_tablename(
@@ -1922,7 +1918,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         self.running_job_id = job.job_id
         return job.job_id
 
-    def run_copy(  # pylint: disable=invalid-name
+    def run_copy(
         self,
         source_project_dataset_tables: Union[List, str],
         destination_project_dataset_table: str,
@@ -2090,7 +2086,6 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         self.running_job_id = job.job_id
         return job.job_id
 
-    # pylint: disable=too-many-locals,too-many-arguments, too-many-branches
     def run_query(
         self,
         sql: str,
@@ -2224,15 +2219,14 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         # BigQuery also allows you to define how you want a table's schema to change
         # as a side effect of a query job
         # for more details:
-        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.schemaUpdateOptions  # noqa # pylint: disable=line-too-long
+        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.schemaUpdateOptions  # noqa
 
         allowed_schema_update_options = ['ALLOW_FIELD_ADDITION', "ALLOW_FIELD_RELAXATION"]
 
         if not set(allowed_schema_update_options).issuperset(set(schema_update_options)):
             raise ValueError(
-                "{} contains invalid schema update options. "
-                "Please only use one or more of the following "
-                "options: {}".format(schema_update_options, allowed_schema_update_options)
+                f"{schema_update_options} contains invalid schema update options."
+                f" Please only use one or more of the following options: {allowed_schema_update_options}"
             )
 
         if schema_update_options:
@@ -2366,18 +2360,18 @@ class BigQueryConnection:
         self._args = args
         self._kwargs = kwargs
 
-    def close(self) -> None:  # noqa: D403
-        """BigQueryConnection does not have anything to close"""
+    def close(self) -> None:
+        """The BigQueryConnection does not have anything to close"""
 
-    def commit(self) -> None:  # noqa: D403
-        """BigQueryConnection does not support transactions"""
+    def commit(self) -> None:
+        """The BigQueryConnection does not support transactions"""
 
-    def cursor(self) -> "BigQueryCursor":  # noqa: D403
+    def cursor(self) -> "BigQueryCursor":
         """Return a new :py:class:`Cursor` object using the connection"""
         return BigQueryCursor(*self._args, **self._kwargs)
 
-    def rollback(self) -> NoReturn:  # noqa: D403
-        """BigQueryConnection does not have transactions"""
+    def rollback(self) -> NoReturn:
+        """The BigQueryConnection does not have transactions"""
         raise NotImplementedError("BigQueryConnection does not have transactions")
 
 
@@ -2659,7 +2653,7 @@ class BigQueryBaseCursor(LoggingMixin):
             DeprecationWarning,
             stacklevel=3,
         )
-        return self.hook.cancel_query(*args, **kwargs)  # type: ignore  # noqa
+        return self.hook.cancel_query(*args, **kwargs)  # type: ignore
 
     def run_with_configuration(self, *args, **kwargs) -> str:
         """
@@ -2807,7 +2801,6 @@ class BigQueryCursor(BigQueryBaseCursor):
 
     def fetchone(self) -> Union[List, None]:
         """Fetch the next row of a query result set"""
-        # pylint: disable=not-callable
         return self.next()
 
     def next(self) -> Union[List, None]:
@@ -2967,10 +2960,7 @@ def _split_tablename(
             return f"Format exception for {var_name}: "
 
     if table_input.count('.') + table_input.count(':') > 3:
-        raise Exception(
-            '{var}Use either : or . to specify project '
-            'got {input}'.format(var=var_print(var_name), input=table_input)
-        )
+        raise Exception(f'{var_print(var_name)}Use either : or . to specify project got {table_input}')
     cmpt = table_input.rsplit(':', 1)
     project_id = None
     rest = table_input
@@ -2983,8 +2973,7 @@ def _split_tablename(
             rest = cmpt[1]
     else:
         raise Exception(
-            '{var}Expect format of (<project:)<dataset>.<table>, '
-            'got {input}'.format(var=var_print(var_name), input=table_input)
+            f'{var_print(var_name)}Expect format of (<project:)<dataset>.<table>, got {table_input}'
         )
 
     cmpt = rest.split('.')
@@ -3000,8 +2989,7 @@ def _split_tablename(
         table_id = cmpt[1]
     else:
         raise Exception(
-            '{var}Expect format of (<project.|<project:)<dataset>.<table>, '
-            'got {input}'.format(var=var_print(var_name), input=table_input)
+            f'{var_print(var_name)}Expect format of (<project.|<project:)<dataset>.<table>, got {table_input}'
         )
 
     if project_id is None:

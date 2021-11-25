@@ -33,20 +33,21 @@
 #                        all the build essentials. This makes the image
 #                        much smaller.
 #
-ARG AIRFLOW_VERSION="2.0.2"
-ARG AIRFLOW_EXTRAS="async,cncf.kubernetes,docker,dask,http,ldap,postgres,sftp,slack,ssh,statsd,virtualenv"
+ARG AIRFLOW_VERSION="2.2.2"
+ARG AIRFLOW_EXTRAS="amazon,async,celery,cncf.kubernetes,dask,docker,elasticsearch,ftp,google,google_auth,grpc,hashicorp,http,ldap,microsoft.azure,mysql,odbc,pandas,postgres,redis,sendgrid,sftp,slack,ssh,statsd,virtualenv"
 ARG ADDITIONAL_AIRFLOW_EXTRAS=""
 ARG ADDITIONAL_PYTHON_DEPS=""
 
 ARG AIRFLOW_HOME=/opt/airflow
 ARG AIRFLOW_UID="50000"
-ARG AIRFLOW_GID="50000"
 
 ARG CASS_DRIVER_BUILD_CONCURRENCY="8"
 
 ARG PYTHON_BASE_IMAGE="avainformationsystems.azurecr.io/base-images/python:3.7-slim-buster"
 ARG PYTHON_MAJOR_MINOR_VERSION="3.7"
 ARG AIRFLOW_PIP_VERSION=21.1.1
+ARG AIRFLOW_PIP_VERSION=21.2.4
+ARG AIRFLOW_IMAGE_REPOSITORY="https://github.com/apache/airflow"
 
 # By default PIP has progress bar but you can disable it.
 ARG PIP_PROGRESS_BAR="on"
@@ -110,12 +111,13 @@ ARG DEV_APT_COMMAND="\
     && curl https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - > /dev/null \
     && echo 'deb https://dl.yarnpkg.com/debian/ stable main' > /etc/apt/sources.list.d/yarn.list"
 ARG ADDITIONAL_DEV_APT_COMMAND="echo"
+ARG ADDITIONAL_DEV_APT_ENV=""
 
 ENV DEV_APT_DEPS=${DEV_APT_DEPS} \
     ADDITIONAL_DEV_APT_DEPS=${ADDITIONAL_DEV_APT_DEPS} \
     DEV_APT_COMMAND=${DEV_APT_COMMAND} \
     ADDITIONAL_DEV_APT_COMMAND=${ADDITIONAL_DEV_APT_COMMAND} \
-    ADDITIONAL_DEV_APT_ENV=""
+    ADDITIONAL_DEV_APT_ENV=${ADDITIONAL_DEV_APT_ENV}
 
 # Note missing man directories on debian-buster
 # https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=863199
@@ -134,8 +136,9 @@ RUN mkdir -pv /usr/share/man/man1 \
     && rm -rf /var/lib/apt/lists/*
 
 ARG INSTALL_MYSQL_CLIENT="true"
+ARG INSTALL_MSSQL_CLIENT="true"
 ARG AIRFLOW_REPO=apache/airflow
-ARG AIRFLOW_BRANCH=master
+ARG AIRFLOW_BRANCH=main
 ARG AIRFLOW_EXTRAS
 ARG ADDITIONAL_AIRFLOW_EXTRAS=""
 # Allows to override constraints source
@@ -143,7 +146,7 @@ ARG CONSTRAINTS_GITHUB_REPOSITORY="apache/airflow"
 ARG AIRFLOW_CONSTRAINTS="constraints"
 ARG AIRFLOW_CONSTRAINTS_REFERENCE=""
 ARG AIRFLOW_CONSTRAINTS_LOCATION=""
-ARG DEFAULT_CONSTRAINTS_BRANCH="constraints-master"
+ARG DEFAULT_CONSTRAINTS_BRANCH="constraints-main"
 ARG AIRFLOW_PIP_VERSION
 # By default PIP has progress bar but you can disable it.
 ARG PIP_PROGRESS_BAR
@@ -174,6 +177,7 @@ ARG AIRFLOW_SOURCES_FROM="empty"
 ARG AIRFLOW_SOURCES_TO="/empty"
 
 ENV INSTALL_MYSQL_CLIENT=${INSTALL_MYSQL_CLIENT} \
+    INSTALL_MSSQL_CLIENT=${INSTALL_MSSQL_CLIENT} \
     AIRFLOW_REPO=${AIRFLOW_REPO} \
     AIRFLOW_BRANCH=${AIRFLOW_BRANCH} \
     AIRFLOW_EXTRAS=${AIRFLOW_EXTRAS}${ADDITIONAL_AIRFLOW_EXTRAS:+,}${ADDITIONAL_AIRFLOW_EXTRAS} \
@@ -192,7 +196,9 @@ ENV INSTALL_MYSQL_CLIENT=${INSTALL_MYSQL_CLIENT} \
     UPGRADE_TO_NEWER_DEPENDENCIES=${UPGRADE_TO_NEWER_DEPENDENCIES}
 
 COPY scripts/docker/*.sh /scripts/docker/
-RUN bash ./scripts/docker/install_mysql.sh dev
+RUN bash ./scripts/docker/install_mysql.sh dev \
+    && bash ./scripts/docker/install_mssql.sh
+ENV PATH=${PATH}:/opt/mssql-tools/bin
 
 COPY docker-context-files /docker-context-files
 
@@ -208,7 +214,7 @@ ENV AIRFLOW_PRE_CACHED_PIP_PACKAGES=${AIRFLOW_PRE_CACHED_PIP_PACKAGES} \
     AIRFLOW_SOURCES_FROM=${AIRFLOW_SOURCES_FROM} \
     AIRFLOW_SOURCES_TO=${AIRFLOW_SOURCES_TO}
 
-# In case of Production build image segment we want to pre-install master version of airflow
+# In case of Production build image segment we want to pre-install main version of airflow
 # dependencies from GitHub so that we do not have to always reinstall it from the scratch.
 # The Airflow (and providers in case INSTALL_PROVIDERS_FROM_SOURCES is "false")
 # are uninstalled, only dependencies remain
@@ -218,7 +224,7 @@ ENV AIRFLOW_PRE_CACHED_PIP_PACKAGES=${AIRFLOW_PRE_CACHED_PIP_PACKAGES} \
 RUN bash /scripts/docker/install_pip_version.sh; \
     if [[ ${AIRFLOW_PRE_CACHED_PIP_PACKAGES} == "true" && \
           ${UPGRADE_TO_NEWER_DEPENDENCIES} == "false" ]]; then \
-        bash /scripts/docker/install_airflow_from_branch_tip.sh; \
+        bash /scripts/docker/install_airflow_dependencies_from_branch_tip.sh; \
     fi
 
 COPY ${AIRFLOW_SOURCES_FROM} ${AIRFLOW_SOURCES_TO}
@@ -234,24 +240,26 @@ ARG INSTALL_FROM_DOCKER_CONTEXT_FILES=""
 ARG INSTALL_FROM_PYPI="true"
 # Those are additional constraints that are needed for some extras but we do not want to
 # Force them on the main Airflow package.
-# * chardet<4 - required to keep snowflake happy
-# * urllib3 - required to keep boto3 happy
+# * certifi<2021.0.0 required to keep snowflake happy
 # * pyjwt<2.0.0: flask-jwt-extended requires it
 # * dill<0.3.3 required by apache-beam
-ARG EAGER_UPGRADE_ADDITIONAL_REQUIREMENTS="chardet<4 urllib3<1.26 pyjwt<2.0.0 dill<0.3.3"
-ARG CONTINUE_ON_PIP_CHECK_FAILURE="false"
-
+# * google-ads<14.0.1 required to prevent updating google-python-api>=2.0.0
+ARG EAGER_UPGRADE_ADDITIONAL_REQUIREMENTS="pyjwt<2.0.0 dill<0.3.3 certifi<2021.0.0 google-ads<14.0.1"
 
 ENV ADDITIONAL_PYTHON_DEPS=${ADDITIONAL_PYTHON_DEPS} \
     INSTALL_FROM_DOCKER_CONTEXT_FILES=${INSTALL_FROM_DOCKER_CONTEXT_FILES} \
     INSTALL_FROM_PYPI=${INSTALL_FROM_PYPI} \
-    EAGER_UPGRADE_ADDITIONAL_REQUIREMENTS=${EAGER_UPGRADE_ADDITIONAL_REQUIREMENTS} \
-    CONTINUE_ON_PIP_CHECK_FAILURE=${CONTINUE_ON_PIP_CHECK_FAILURE}
+    EAGER_UPGRADE_ADDITIONAL_REQUIREMENTS=${EAGER_UPGRADE_ADDITIONAL_REQUIREMENTS}
 
 WORKDIR /opt/airflow
 
 # hadolint ignore=SC2086, SC2010
-RUN if [[ ${INSTALL_FROM_DOCKER_CONTEXT_FILES} == "true" ]]; then \
+RUN if [[ ${AIRFLOW_INSTALLATION_METHOD} == "." ]]; then \
+        # only compile assets if the prod image is build from sources
+        # otherwise they are already compiled-in
+        bash /scripts/docker/compile_www_assets.sh; \
+    fi; \
+    if [[ ${INSTALL_FROM_DOCKER_CONTEXT_FILES} == "true" ]]; then \
         bash /scripts/docker/install_from_docker_context_files.sh; \
     elif [[ ${INSTALL_FROM_PYPI} == "true" ]]; then \
         bash /scripts/docker/install_airflow.sh; \
@@ -261,14 +269,20 @@ RUN if [[ ${INSTALL_FROM_DOCKER_CONTEXT_FILES} == "true" ]]; then \
     fi; \
     find /root/.local/ -name '*.pyc' -print0 | xargs -0 rm -r || true ; \
     find /root/.local/ -type d -name '__pycache__' -print0 | xargs -0 rm -r || true ; \
-    bash /scripts/docker/compile_www_assets.sh; \
     # make sure that all directories and files in .local are also group accessible
     find /root/.local -executable -print0 | xargs --null chmod g+x; \
     find /root/.local -print0 | xargs --null chmod g+rw
 
+# In case there is a requirements.txt file in "docker-context-files" it will be installed
+# during the build additionally to whatever has been installed so far. It is recommended that
+# the requirements.txt contains only dependencies with == version specification
+RUN if [[ -f /docker-context-files/requirements.txt ]]; then \
+        pip install --no-cache-dir --user -r /docker-context-files/requirements.txt; \
+    fi
+
 ARG BUILD_ID
 ARG COMMIT_SHA
-ARG AIRFLOW_IMAGE_REPOSITORY="https://github.com/apache/airflow"
+ARG AIRFLOW_IMAGE_REPOSITORY
 ARG AIRFLOW_IMAGE_DATE_CREATED
 
 ENV BUILD_ID=${BUILD_ID} COMMIT_SHA=${COMMIT_SHA}
@@ -285,15 +299,14 @@ LABEL org.apache.airflow.distro="debian" \
   org.opencontainers.image.created=${AIRFLOW_IMAGE_DATE_CREATED} \
   org.opencontainers.image.authors="dev@airflow.apache.org" \
   org.opencontainers.image.url="https://airflow.apache.org" \
-  org.opencontainers.image.documentation="https://airflow.apache.org/docs/apache-airflow/stable/production-deployment.html" \
-  org.opencontainers.image.source="https://github.com/apache/airflow" \
+  org.opencontainers.image.documentation="https://airflow.apache.org/docs/docker-stack/index.html" \
   org.opencontainers.image.version="${AIRFLOW_VERSION}" \
   org.opencontainers.image.revision="${COMMIT_SHA}" \
   org.opencontainers.image.vendor="Apache Software Foundation" \
   org.opencontainers.image.licenses="Apache-2.0" \
   org.opencontainers.image.ref.name="airflow-build-image" \
   org.opencontainers.image.title="Build Image Segment for Production Airflow Image" \
-  org.opencontainers.image.description="Installed Apache Airflow with build-time dependencies"
+  org.opencontainers.image.description="Reference build-time dependencies image for production-ready Apache Airflow image"
 
 ##############################################################################################
 # This is the actual Airflow image - much smaller than the build one. We copy
@@ -303,15 +316,13 @@ FROM ${PYTHON_BASE_IMAGE} as main
 SHELL ["/bin/bash", "-o", "pipefail", "-e", "-u", "-x", "-c"]
 
 ARG AIRFLOW_UID
-ARG AIRFLOW_GID
 
 LABEL org.apache.airflow.distro="debian" \
   org.apache.airflow.distro.version="buster" \
   org.apache.airflow.module="airflow" \
   org.apache.airflow.component="airflow" \
   org.apache.airflow.image="airflow" \
-  org.apache.airflow.uid="${AIRFLOW_UID}" \
-  org.apache.airflow.gid="${AIRFLOW_GID}"
+  org.apache.airflow.uid="${AIRFLOW_UID}"
 
 ARG PYTHON_BASE_IMAGE
 ARG AIRFLOW_PIP_VERSION
@@ -333,6 +344,9 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# As of August 2021, Debian buster-slim does not include Python2 by default and we need it
+# as we still support running Python2 via PythonVirtualenvOperator
+# TODO: Remove python2 when we stop supporting it
 ARG RUNTIME_APT_DEPS="\
        apt-transport-https \
        apt-utils \
@@ -354,6 +368,7 @@ ARG RUNTIME_APT_DEPS="\
        netcat \
        openssh-client \
        postgresql-client \
+       python2 \
        rsync \
        sasl2-bin \
        sqlite3 \
@@ -364,6 +379,7 @@ ARG RUNTIME_APT_COMMAND="echo"
 ARG ADDITIONAL_RUNTIME_APT_COMMAND=""
 ARG ADDITIONAL_RUNTIME_APT_ENV=""
 ARG INSTALL_MYSQL_CLIENT="true"
+ARG INSTALL_MSSQL_CLIENT="true"
 ARG AIRFLOW_USER_HOME_DIR=/home/airflow
 ARG AIRFLOW_HOME
 # Having the variable in final image allows to disable providers manager warnings when
@@ -371,7 +387,7 @@ ARG AIRFLOW_HOME
 ARG AIRFLOW_INSTALLATION_METHOD="apache-airflow"
 ARG BUILD_ID
 ARG COMMIT_SHA
-ARG AIRFLOW_IMAGE_REPOSITORY="https://github.com/apache/airflow"
+ARG AIRFLOW_IMAGE_REPOSITORY
 ARG AIRFLOW_IMAGE_DATE_CREATED
 # By default PIP will install everything in ~/.local
 ARG PIP_USER="true"
@@ -381,7 +397,8 @@ ENV RUNTIME_APT_DEPS=${RUNTIME_APT_DEPS} \
     RUNTIME_APT_COMMAND=${RUNTIME_APT_COMMAND} \
     ADDITIONAL_RUNTIME_APT_COMMAND=${ADDITIONAL_RUNTIME_APT_COMMAND} \
     INSTALL_MYSQL_CLIENT=${INSTALL_MYSQL_CLIENT} \
-    AIRFLOW_UID=${AIRFLOW_UID} AIRFLOW_GID=${AIRFLOW_GID} \
+    INSTALL_MSSQL_CLIENT=${INSTALL_MSSQL_CLIENT} \
+    AIRFLOW_UID=${AIRFLOW_UID} \
     AIRFLOW__CORE__LOAD_EXAMPLES="false" \
     AIRFLOW_USER_HOME_DIR=${AIRFLOW_USER_HOME_DIR} \
     AIRFLOW_HOME=${AIRFLOW_HOME} \
@@ -408,16 +425,16 @@ RUN mkdir -pv /usr/share/man/man1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Only copy install_mysql and install_pip_version.sh. We do not need any other scripts in the final image.
-COPY scripts/docker/install_mysql.sh scripts/docker/install_pip_version.sh /scripts/docker/
+# Only copy install_m(y/s)sql and install_pip_version.sh. We do not need any other scripts in the final image.
+COPY scripts/docker/install_mysql.sh /scripts/docker/install_mssql.sh scripts/docker/install_pip_version.sh \
+   /scripts/docker/
 
 # fix permission issue in Azure DevOps when running the scripts
 RUN chmod a+x /scripts/docker/install_mysql.sh && \
     /scripts/docker/install_mysql.sh prod && \
-    addgroup --gid "${AIRFLOW_GID}" "airflow" && \
-    adduser --quiet "airflow" --uid "${AIRFLOW_UID}" \
-        --gid "${AIRFLOW_GID}" \
-        --home "${AIRFLOW_USER_HOME_DIR}" && \
+    chmod a+x /scripts/docker/install_mssql.sh && \
+    /scripts/docker/install_mssql.sh && \
+    adduser --quiet "airflow" --uid "${AIRFLOW_UID}" --gid "0" --home "${AIRFLOW_USER_HOME_DIR}" && \
 # Make Airflow files belong to the root group and are accessible. This is to accommodate the guidelines from
 # OpenShift https://docs.openshift.com/enterprise/3.0/creating_images/guidelines.html
     mkdir -pv "${AIRFLOW_HOME}"; \
@@ -442,7 +459,7 @@ WORKDIR ${AIRFLOW_HOME}
 
 EXPOSE 8080
 
-RUN usermod -g 0 airflow -G ${AIRFLOW_GID}
+RUN usermod -g 0 airflow -G 0
 
 USER ${AIRFLOW_UID}
 
@@ -453,23 +470,34 @@ LABEL org.apache.airflow.distro="debian" \
   org.apache.airflow.image="airflow" \
   org.apache.airflow.version="${AIRFLOW_VERSION}" \
   org.apache.airflow.uid="${AIRFLOW_UID}" \
-  org.apache.airflow.gid="${AIRFLOW_GID}" \
   org.apache.airflow.main-image.build-id="${BUILD_ID}" \
   org.apache.airflow.main-image.commit-sha="${COMMIT_SHA}" \
   org.opencontainers.image.source="${AIRFLOW_IMAGE_REPOSITORY}" \
   org.opencontainers.image.created=${AIRFLOW_IMAGE_DATE_CREATED} \
   org.opencontainers.image.authors="dev@airflow.apache.org" \
   org.opencontainers.image.url="https://airflow.apache.org" \
-  org.opencontainers.image.documentation="https://airflow.apache.org/docs/apache-airflow/stable/production-deployment.html" \
-  org.opencontainers.image.source="https://github.com/apache/airflow" \
+  org.opencontainers.image.documentation="https://airflow.apache.org/docs/docker-stack/index.html" \
   org.opencontainers.image.version="${AIRFLOW_VERSION}" \
   org.opencontainers.image.revision="${COMMIT_SHA}" \
   org.opencontainers.image.vendor="Apache Software Foundation" \
   org.opencontainers.image.licenses="Apache-2.0" \
   org.opencontainers.image.ref.name="airflow" \
   org.opencontainers.image.title="Production Airflow Image" \
-  org.opencontainers.image.description="Installed Apache Airflow"
+  org.opencontainers.image.description="Reference, production-ready Apache Airflow image"
 
+
+# See https://airflow.apache.org/docs/docker-stack/entrypoint.html#signal-propagation
+# to learn more about the way how signals are handled by the image
+ENV DUMB_INIT_SETSID="1"
+
+# This one is to workaround https://github.com/apache/airflow/issues/17546
+# issue with /usr/lib/x86_64-linux-gnu/libstdc++.so.6: cannot allocate memory in static TLS block
+# We do not yet a more "correct" solution to the problem but in order to avoid raising new issues
+# by users of the prod image, we implement the workaround now.
+# The side effect of this is slightly (in the range of 100s of milliseconds) slower load for any
+# binary started and a little memory used for Heap allocated by initialization of libstdc++
+# This overhead is not happening for binaries that already link dynamically libstdc++
+ENV LD_PRELOAD="/usr/lib/x86_64-linux-gnu/libstdc++.so.6"
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--", "/entrypoint"]
-CMD ["--help"]
+CMD []

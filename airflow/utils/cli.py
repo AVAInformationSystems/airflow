@@ -34,10 +34,11 @@ from typing import TYPE_CHECKING, Callable, Optional, TypeVar, cast
 from airflow import settings
 from airflow.exceptions import AirflowException
 from airflow.utils import cli_action_loggers
+from airflow.utils.log.non_caching_file_handler import NonCachingFileHandler
 from airflow.utils.platform import getuser, is_terminal_support_colors
 from airflow.utils.session import provide_session
 
-T = TypeVar("T", bound=Callable)  # pylint: disable=invalid-name
+T = TypeVar("T", bound=Callable)
 
 if TYPE_CHECKING:
     from airflow.models import DAG
@@ -115,7 +116,8 @@ def _build_metrics(func_name, namespace):
     sub_commands_to_check = {'users', 'connections'}
     sensitive_fields = {'-p', '--password', '--conn-password'}
     full_command = list(sys.argv)
-    if full_command[1] in sub_commands_to_check:  # pylint: disable=too-many-nested-blocks
+    sub_command = full_command[1] if len(full_command) > 1 else None
+    if sub_command in sub_commands_to_check:
         for idx, command in enumerate(full_command):
             if command in sensitive_fields:
                 # For cases when password is passed as "--password xyz" (with space between key and value)
@@ -175,8 +177,7 @@ def get_dag_by_file_location(dag_id: str):
     dag_model = DagModel.get_current(dag_id)
     if dag_model is None:
         raise AirflowException(
-            'dag_id could not be found: {}. Either the dag did not exist or it failed to '
-            'parse.'.format(dag_id)
+            f"Dag {dag_id!r} could not be found; either it does not exist or it failed to parse."
         )
     dagbag = DagBag(dag_folder=dag_model.fileloc)
     return dagbag.dags[dag_id]
@@ -189,8 +190,7 @@ def get_dag(subdir: Optional[str], dag_id: str) -> "DAG":
     dagbag = DagBag(process_subdir(subdir))
     if dag_id not in dagbag.dags:
         raise AirflowException(
-            'dag_id could not be found: {}. Either the dag did not exist or it failed to '
-            'parse.'.format(dag_id)
+            f"Dag {dag_id!r} could not be found; either it does not exist or it failed to parse."
         )
     return dagbag.dags[dag_id]
 
@@ -205,8 +205,8 @@ def get_dags(subdir: Optional[str], dag_id: str, use_regex: bool = False):
     matched_dags = [dag for dag in dagbag.dags.values() if re.search(dag_id, dag.dag_id)]
     if not matched_dags:
         raise AirflowException(
-            'dag_id could not be found with regex: {}. Either the dag did not exist '
-            'or it failed to parse.'.format(dag_id)
+            f'dag_id could not be found with regex: {dag_id}. Either the dag did not exist or '
+            f'it failed to parse.'
         )
     return matched_dags
 
@@ -243,7 +243,7 @@ def setup_locations(process, pid=None, stdout=None, stderr=None, log=None):
 def setup_logging(filename):
     """Creates log file handler for daemon process"""
     root = logging.getLogger()
-    handler = logging.FileHandler(filename)
+    handler = NonCachingFileHandler(filename)
     formatter = logging.Formatter(settings.SIMPLE_LOG_FORMAT)
     handler.setFormatter(formatter)
     root.addHandler(handler)
@@ -252,7 +252,7 @@ def setup_logging(filename):
     return handler.stream
 
 
-def sigint_handler(sig, frame):  # pylint: disable=unused-argument
+def sigint_handler(sig, frame):
     """
     Returns without error on SIGINT or SIGTERM signals in interactive command mode
     e.g. CTRL+C or kill <PID>
@@ -260,7 +260,7 @@ def sigint_handler(sig, frame):  # pylint: disable=unused-argument
     sys.exit(0)
 
 
-def sigquit_handler(sig, frame):  # pylint: disable=unused-argument
+def sigquit_handler(sig, frame):
     """
     Helps debug deadlocks by printing stacktraces when this gets a SIGQUIT
     e.g. kill -s QUIT <PID> or CTRL+\
@@ -268,7 +268,7 @@ def sigquit_handler(sig, frame):  # pylint: disable=unused-argument
     print(f"Dumping stack traces for all threads in PID {os.getpid()}")
     id_to_name = {th.ident: th.name for th in threading.enumerate()}
     code = []
-    for thread_id, stack in sys._current_frames().items():  # pylint: disable=protected-access
+    for thread_id, stack in sys._current_frames().items():
         code.append(f"\n# Thread: {id_to_name.get(thread_id, '')}({thread_id})")
         for filename, line_number, name, line in traceback.extract_stack(stack):
             code.append(f'File: "{filename}", line {line_number}, in {name}')

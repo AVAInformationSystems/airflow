@@ -4,13 +4,14 @@
   ],
   "amazon": [
     "apache.hive",
+    "cncf.kubernetes",
     "exasol",
     "ftp",
     "google",
     "imap",
     "mongo",
     "mysql",
-    "postgres",
+    "salesforce",
     "ssh"
   ],
   "apache.beam": [

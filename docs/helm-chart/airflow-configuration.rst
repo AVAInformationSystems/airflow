@@ -20,7 +20,7 @@ Configuring Airflow
 
 All Airflow configuration parameters (equivalent of ``airflow.cfg``) are
 stored in
-`values.yaml <https://github.com/apache/airflow/blob/master/chart/values.yaml>`__
+`values.yaml <https://github.com/apache/airflow/blob/main/chart/values.yaml>`__
 under the ``config`` key . The following code demonstrates how one would
 allow webserver users to view the config from within the webserver
 application. See the bottom line of the example:
@@ -67,3 +67,12 @@ configuration prior to installing and deploying the service.
   The recommended way to load example DAGs using the official Docker image and chart is to configure the ``AIRFLOW__CORE__LOAD_EXAMPLES`` environment variable
   in ``extraEnv`` (see :doc:`Parameters reference <parameters-ref>`). Because the official Docker image has ``AIRFLOW__CORE__LOAD_EXAMPLES=False``
   set within the image, so you need to override it when deploying the chart.
+
+.. note::
+
+  The  ``AIRFLOW__CORE__LOAD_DEFAULT_CONNECTIONS`` variable is not used by the Chart. Airflow Helm Chart is
+  intended to be used as production deployment and loading default connections is not supposed to be handled
+  during Chart installation. The Chart is intended to install and configure the Apache Airflow software
+  and create database structure, but not to fill-in the data which should be managed by the users.
+  The default connections are only meaningful when you want to have a ``quick start`` with Airflow or
+  do some development and adding the data via Helm Chart installation is not a good idea.

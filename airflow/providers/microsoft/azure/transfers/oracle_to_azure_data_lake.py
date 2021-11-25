@@ -23,7 +23,7 @@ from typing import Any, Optional, Union
 import unicodecsv as csv
 
 from airflow.models import BaseOperator
-from airflow.providers.microsoft.azure.hooks.azure_data_lake import AzureDataLakeHook
+from airflow.providers.microsoft.azure.hooks.data_lake import AzureDataLakeHook
 from airflow.providers.oracle.hooks.oracle import OracleHook
 
 
@@ -59,7 +59,6 @@ class OracleToAzureDataLakeOperator(BaseOperator):
     template_fields_renderers = {"sql_params": "py"}
     ui_color = '#e08c8c'
 
-    # pylint: disable=too-many-arguments
     def __init__(
         self,
         *,

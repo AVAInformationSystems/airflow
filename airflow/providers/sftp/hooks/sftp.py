@@ -79,12 +79,23 @@ class SFTPHook(SSHHook):
             conn = self.get_connection(self.ssh_conn_id)
             if conn.extra is not None:
                 extra_options = conn.extra_dejson
-                if 'private_key_pass' in extra_options:
-                    self.private_key_pass = extra_options.get('private_key_pass')
 
                 # For backward compatibility
                 # TODO: remove in Airflow 2.1
                 import warnings
+
+                if 'private_key_pass' in extra_options:
+                    warnings.warn(
+                        'Extra option `private_key_pass` is deprecated.'
+                        'Please use `private_key_passphrase` instead.'
+                        '`private_key_passphrase` will precede if both options are specified.'
+                        'The old option `private_key_pass` will be removed in Airflow 2.1',
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
+                self.private_key_pass = extra_options.get(
+                    'private_key_passphrase', extra_options.get('private_key_pass')
+                )
 
                 if 'ignore_hostkey_verification' in extra_options:
                     warnings.warn(
@@ -104,9 +115,6 @@ class SFTPHook(SSHHook):
                 if 'ciphers' in extra_options:
                     self.ciphers = extra_options['ciphers']
 
-                if 'private_key' in extra_options:
-                    self.key_file = extra_options.get('private_key')
-
     @tenacity.retry(
         stop=tenacity.stop_after_delay(10),
         wait=tenacity.wait_exponential(multiplier=1, max=10),
@@ -121,7 +129,7 @@ class SFTPHook(SSHHook):
                 cnopts.hostkeys = None
             else:
                 if self.host_key is not None:
-                    cnopts.hostkeys.add(self.remote_host, 'ssh-rsa', self.host_key)
+                    cnopts.hostkeys.add(self.remote_host, self.host_key.get_name(), self.host_key)
                 else:
                     pass  # will fallback to system host keys if none explicitly specified in conn extra
 
@@ -135,7 +143,9 @@ class SFTPHook(SSHHook):
             }
             if self.password and self.password.strip():
                 conn_params['password'] = self.password
-            if self.key_file:
+            if self.pkey:
+                conn_params['private_key'] = self.pkey
+            elif self.key_file:
                 conn_params['private_key'] = self.key_file
             if self.private_key_pass:
                 conn_params['private_key_pass'] = self.private_key_pass
@@ -213,9 +223,7 @@ class SFTPHook(SSHHook):
         :type local_full_path: str
         """
         conn = self.get_conn()
-        self.log.info('Retrieving file from FTP: %s', remote_full_path)
         conn.get(remote_full_path, local_full_path)
-        self.log.info('Finished retrieving file from FTP: %s', remote_full_path)
 
     def store_file(self, remote_full_path: str, local_full_path: str) -> None:
         """
@@ -312,3 +320,12 @@ class SFTPHook(SSHHook):
         )
 
         return files, dirs, unknowns
+
+    def test_connection(self) -> Tuple[bool, str]:
+        """Test the SFTP connection by checking if remote entity '/some/path' exists"""
+        try:
+            conn = self.get_conn()
+            conn.pwd
+            return True, "Connection successfully tested"
+        except Exception as e:
+            return False, str(e)

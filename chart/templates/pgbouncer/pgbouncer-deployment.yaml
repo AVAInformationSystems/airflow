@@ -77,11 +77,12 @@ spec:
         - name: pgbouncer
           image: {{ template "pgbouncer_image" . }}
           imagePullPolicy: {{ .Values.images.pgbouncer.pullPolicy }}
-          command:
-            - pgbouncer
-            - -u
-            - nobody
-            - /etc/pgbouncer/pgbouncer.ini
+          {{- if .Values.pgbouncer.command }}
+          command: {{ tpl (toYaml .Values.pgbouncer.command) . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.pgbouncer.args }}
+          args: {{ tpl (toYaml .Values.pgbouncer.args) . | nindent 12 }}
+          {{- end }}
           resources:
 {{ toYaml .Values.pgbouncer.resources | indent 12 }}
           ports:
@@ -126,6 +127,8 @@ spec:
                 # Allow existing queries clients to complete within 120 seconds
                 command: ["/bin/sh", "-c", "killall -INT pgbouncer && sleep 120"]
         - name: metrics-exporter
+          resources:
+{{ toYaml .Values.pgbouncer.metricsExporterSidecar.resources | indent 12 }}
           image: {{ template "pgbouncer_exporter_image" . }}
           imagePullPolicy: {{ .Values.images.pgbouncerExporter.pullPolicy }}
           env:

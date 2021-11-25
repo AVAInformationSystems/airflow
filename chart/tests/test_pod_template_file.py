@@ -85,7 +85,7 @@ class PodTemplateFileTest(unittest.TestCase):
 
         assert re.search("Pod", docs[0]["kind"])
         assert {
-            "name": "git-sync-test",
+            "name": "git-sync-test-init",
             "securityContext": {"runAsUser": 65533},
             "image": "test-registry/test-repo:test-tag",
             "imagePullPolicy": "Always",
@@ -294,15 +294,15 @@ class PodTemplateFileTest(unittest.TestCase):
         )
 
         assert re.search("Pod", docs[0]["kind"])
-        assert {'configMap': {'name': 'RELEASE-NAME-airflow-config'}, 'name': 'config'} == jmespath.search(
-            "spec.volumes[1]", docs[0]
+        assert {'configMap': {'name': 'RELEASE-NAME-airflow-config'}, 'name': 'config'} in jmespath.search(
+            "spec.volumes", docs[0]
         )
         assert {
             'name': 'config',
             'mountPath': '/opt/airflow/airflow.cfg',
             'subPath': 'airflow.cfg',
             'readOnly': True,
-        } == jmespath.search("spec.containers[0].volumeMounts[1]", docs[0])
+        } in jmespath.search("spec.containers[0].volumeMounts", docs[0])
 
     def test_should_create_valid_affinity_and_node_selector(self):
         docs = render_chart(
@@ -368,12 +368,12 @@ class PodTemplateFileTest(unittest.TestCase):
             chart_dir=self.temp_chart_dir,
         )
 
-        assert "test-volume" == jmespath.search(
-            "spec.volumes[2].name",
+        assert "test-volume" in jmespath.search(
+            "spec.volumes[*].name",
             docs[0],
         )
-        assert "test-volume" == jmespath.search(
-            "spec.containers[0].volumeMounts[2].name",
+        assert "test-volume" in jmespath.search(
+            "spec.containers[0].volumeMounts[*].name",
             docs[0],
         )
 
@@ -393,8 +393,12 @@ class PodTemplateFileTest(unittest.TestCase):
 
         assert {"name": "FOO", "value": "bar"} in jmespath.search("spec.initContainers[0].env", docs[0])
 
-    def test_no_airflow_local_settings_by_default(self):
-        docs = render_chart(show_only=["templates/pod-template-file.yaml"], chart_dir=self.temp_chart_dir)
+    def test_no_airflow_local_settings(self):
+        docs = render_chart(
+            values={"airflowLocalSettings": None},
+            show_only=["templates/pod-template-file.yaml"],
+            chart_dir=self.temp_chart_dir,
+        )
         volume_mounts = jmespath.search("spec.containers[0].volumeMounts", docs[0])
         assert "airflow_local_settings.py" not in str(volume_mounts)
 
@@ -438,3 +442,115 @@ class PodTemplateFileTest(unittest.TestCase):
             "name": "test-init-container",
             "image": "test-registry/test-repo:test-tag",
         } == jmespath.search("spec.initContainers[-1]", docs[0])
+
+    def test_should_add_extra_containers(self):
+        docs = render_chart(
+            values={
+                "workers": {
+                    "extraContainers": [
+                        {"name": "test-container", "image": "test-registry/test-repo:test-tag"}
+                    ],
+                },
+            },
+            show_only=["templates/pod-template-file.yaml"],
+            chart_dir=self.temp_chart_dir,
+        )
+
+        assert {
+            "name": "test-container",
+            "image": "test-registry/test-repo:test-tag",
+        } == jmespath.search("spec.containers[-1]", docs[0])
+
+    def test_should_add_pod_labels(self):
+        docs = render_chart(
+            values={"labels": {"label1": "value1", "label2": "value2"}},
+            show_only=["templates/pod-template-file.yaml"],
+            chart_dir=self.temp_chart_dir,
+        )
+
+        assert {
+            "label1": "value1",
+            "label2": "value2",
+            "release": "RELEASE-NAME",
+            "component": "worker",
+            "tier": "airflow",
+        } == jmespath.search("metadata.labels", docs[0])
+
+    def test_should_add_resources(self):
+        docs = render_chart(
+            values={
+                "workers": {
+                    "resources": {
+                        "requests": {"memory": "2Gi", "cpu": "1"},
+                        "limits": {"memory": "3Gi", "cpu": "2"},
+                    }
+                }
+            },
+            show_only=["templates/pod-template-file.yaml"],
+            chart_dir=self.temp_chart_dir,
+        )
+
+        assert {
+            "limits": {
+                "cpu": "2",
+                "memory": "3Gi",
+            },
+            "requests": {
+                "cpu": "1",
+                "memory": "2Gi",
+            },
+        } == jmespath.search("spec.containers[0].resources", docs[0])
+
+    def test_empty_resources(self):
+        docs = render_chart(
+            values={},
+            show_only=["templates/pod-template-file.yaml"],
+            chart_dir=self.temp_chart_dir,
+        )
+        assert {} == jmespath.search("spec.containers[0].resources", docs[0])
+
+    def test_should_create_valid_affinity_tolerations_and_node_selector(self):
+        docs = render_chart(
+            values={
+                "executor": "KubernetesExecutor",
+                "workers": {
+                    "affinity": {
+                        "nodeAffinity": {
+                            "requiredDuringSchedulingIgnoredDuringExecution": {
+                                "nodeSelectorTerms": [
+                                    {
+                                        "matchExpressions": [
+                                            {"key": "foo", "operator": "In", "values": ["true"]},
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "tolerations": [
+                        {"key": "dynamic-pods", "operator": "Equal", "value": "true", "effect": "NoSchedule"}
+                    ],
+                    "nodeSelector": {"diskType": "ssd"},
+                },
+            },
+            show_only=["templates/pod-template-file.yaml"],
+            chart_dir=self.temp_chart_dir,
+        )
+
+        assert "Pod" == jmespath.search("kind", docs[0])
+        assert "foo" == jmespath.search(
+            "spec.affinity.nodeAffinity."
+            "requiredDuringSchedulingIgnoredDuringExecution."
+            "nodeSelectorTerms[0]."
+            "matchExpressions[0]."
+            "key",
+            docs[0],
+        )
+        assert "ssd" == jmespath.search(
+            "spec.nodeSelector.diskType",
+            docs[0],
+        )
+        assert "dynamic-pods" == jmespath.search(
+            "spec.tolerations[0].key",
+            docs[0],
+        )

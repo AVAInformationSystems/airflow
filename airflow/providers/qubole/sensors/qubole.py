@@ -37,8 +37,8 @@ class QuboleSensor(BaseSensorOperator):
 
         if 'poke_interval' in kwargs and kwargs['poke_interval'] < 5:
             raise AirflowException(
-                "Sorry, poke_interval can't be less than 5 sec for "
-                "task '{}' in dag '{}'.".format(kwargs['task_id'], kwargs['dag'].dag_id)
+                f"Sorry, poke_interval can't be less than 5 sec for task '{kwargs['task_id']}' "
+                f"in dag '{kwargs['dag'].dag_id}'."
             )
 
         super().__init__(**kwargs)
@@ -52,10 +52,8 @@ class QuboleSensor(BaseSensorOperator):
 
         status = False
         try:
-            status = self.sensor_class.check(  # type: ignore[attr-defined]  # pylint: disable=no-member
-                self.data
-            )
-        except Exception as e:  # pylint: disable=broad-except
+            status = self.sensor_class.check(self.data)  # type: ignore[attr-defined]
+        except Exception as e:
             self.log.exception(e)
             status = False
 
@@ -72,7 +70,7 @@ class QuboleFileSensor(QuboleSensor):
     :param qubole_conn_id: Connection id which consists of qds auth_token
     :type qubole_conn_id: str
     :param data: a JSON object containing payload, whose presence needs to be checked
-        Check this `example <https://github.com/apache/airflow/blob/master\
+        Check this `example <https://github.com/apache/airflow/blob/main\
         /airflow/providers/qubole/example_dags/example_qubole_sensor.py>`_ for sample payload
         structure.
     :type data: dict
@@ -94,7 +92,7 @@ class QubolePartitionSensor(QuboleSensor):
     :param qubole_conn_id: Connection id which consists of qds auth_token
     :type qubole_conn_id: str
     :param data: a JSON object containing payload, whose presence needs to be checked.
-        Check this `example <https://github.com/apache/airflow/blob/master\
+        Check this `example <https://github.com/apache/airflow/blob/main\
         /airflow/providers/qubole/example_dags/example_qubole_sensor.py>`_ for sample payload
         structure.
     :type data: dict

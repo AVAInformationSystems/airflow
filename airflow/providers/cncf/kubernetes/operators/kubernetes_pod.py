@@ -17,7 +17,7 @@
 """Executes task in a Kubernetes POD"""
 import re
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple, Type
 
 from kubernetes.client import CoreV1Api, models as k8s
 
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     import jinja2
 
 
-class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-attributes
+class KubernetesPodOperator(BaseOperator):
     """
     Execute a task in a Kubernetes Pod
 
@@ -73,8 +73,11 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
         but fully qualified URLS will point to custom repositories. (templated)
     :type image: str
     :param name: name of the pod in which the task will run, will be used (plus a random
-        suffix) to generate a pod id (DNS-1123 subdomain, containing only [a-z0-9.-]).
+        suffix if random_name_suffix is True) to generate a pod id (DNS-1123 subdomain,
+        containing only [a-z0-9.-]).
     :type name: str
+    :param random_name_suffix: if True, will generate a random suffix.
+    :type random_name_suffix: bool
     :param cmds: entrypoint of the container. (templated)
         The docker images's entrypoint is used if this is not provided.
     :type cmds: list[str]
@@ -121,8 +124,8 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
     :param config_file: The path to the Kubernetes config file. (templated)
         If not specified, default value is ``~/.kube/config``
     :type config_file: str
-    :param node_selectors: A dict containing a group of scheduling rules.
-    :type node_selectors: dict
+    :param node_selector: A dict containing a group of scheduling rules.
+    :type node_selector: dict
     :param image_pull_secrets: Any image pull secrets to be given to the pod.
         If more than one secret is required, provide a
         comma separated list: secret_a,secret_b
@@ -170,18 +173,18 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
         'labels',
         'config_file',
         'pod_template_file',
+        'namespace',
     )
 
-    template_ext = ('yaml', 'yml', 'json')
-
     # fmt: off
-    def __init__(  # pylint: disable=too-many-arguments,too-many-locals
+    def __init__(
         # fmt: on
         self,
         *,
         namespace: Optional[str] = None,
         image: Optional[str] = None,
         name: Optional[str] = None,
+        random_name_suffix: Optional[bool] = True,
         cmds: Optional[List[str]] = None,
         arguments: Optional[List[str]] = None,
         ports: Optional[List[k8s.V1ContainerPort]] = None,
@@ -196,7 +199,7 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
         reattach_on_restart: bool = True,
         startup_timeout_seconds: int = 120,
         get_logs: bool = True,
-        image_pull_policy: str = 'IfNotPresent',
+        image_pull_policy: Optional[str] = None,
         annotations: Optional[Dict] = None,
         resources: Optional[k8s.V1ResourceRequirements] = None,
         affinity: Optional[k8s.V1Affinity] = None,
@@ -204,7 +207,7 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
         node_selectors: Optional[dict] = None,
         node_selector: Optional[dict] = None,
         image_pull_secrets: Optional[List[k8s.V1LocalObjectReference]] = None,
-        service_account_name: str = 'default',
+        service_account_name: Optional[str] = None,
         is_delete_operator_pod: bool = False,
         hostnetwork: bool = False,
         tolerations: Optional[List[k8s.V1Toleration]] = None,
@@ -219,7 +222,7 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
         priority_class_name: Optional[str] = None,
         pod_runtime_info_envs: List[PodRuntimeInfoEnv] = None,
         termination_grace_period: Optional[int] = None,
-        configmaps: Optional[str] = None,
+        configmaps: Optional[List[str]] = None,
         **kwargs,
     ) -> None:
         if kwargs.get('xcom_push') is not None:
@@ -277,6 +280,7 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
         self.priority_class_name = priority_class_name
         self.pod_template_file = pod_template_file
         self.name = self._set_name(name)
+        self.random_name_suffix = random_name_suffix
         self.termination_grace_period = termination_grace_period
         self.client: CoreV1Api = None
         self.pod: k8s.V1Pod = None
@@ -324,6 +328,9 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
             labels[label_id] = safe_label
         return labels
 
+    def create_pod_launcher(self) -> Type[pod_launcher.PodLauncher]:
+        return pod_launcher.PodLauncher(kube_client=self.client, extract_xcom=self.do_xcom_push)
+
     def execute(self, context) -> Optional[str]:
         try:
             if self.in_cluster is not None:
@@ -337,36 +344,35 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
                     cluster_context=self.cluster_context, config_file=self.config_file
                 )
 
+            self.client = client
+
             self.pod = self.create_pod_request_obj()
             self.namespace = self.pod.metadata.namespace
-
-            self.client = client
 
             # Add combination of labels to uniquely identify a running pod
             labels = self.create_labels_for_pod(context)
 
             label_selector = self._get_pod_identifying_label_string(labels)
 
-            pod_list = client.list_namespaced_pod(self.namespace, label_selector=label_selector)
+            pod_list = self.client.list_namespaced_pod(self.namespace, label_selector=label_selector)
 
             if len(pod_list.items) > 1 and self.reattach_on_restart:
                 raise AirflowException(
                     f'More than one pod running with labels: {label_selector}'
                 )
 
-            launcher = pod_launcher.PodLauncher(kube_client=client, extract_xcom=self.do_xcom_push)
+            launcher = self.create_pod_launcher()
 
             if len(pod_list.items) == 1:
                 try_numbers_match = self._try_numbers_match(context, pod_list.items[0])
-                final_state, result = self.handle_pod_overlap(
+                final_state, remote_pod, result = self.handle_pod_overlap(
                     labels, try_numbers_match, launcher, pod_list.items[0]
                 )
             else:
                 self.log.info("creating pod with labels %s and launcher %s", labels, launcher)
-                final_state, _, result = self.create_new_pod_for_operator(labels, launcher)
+                final_state, remote_pod, result = self.create_new_pod_for_operator(labels, launcher)
             if final_state != State.SUCCESS:
-                status = self.client.read_namespaced_pod(self.pod.metadata.name, self.namespace)
-                raise AirflowException(f'Pod {self.pod.metadata.name} returned a failure: {status}')
+                raise AirflowException(f'Pod {self.pod.metadata.name} returned a failure: {remote_pod}')
             context['task_instance'].xcom_push(key='pod_name', value=self.pod.metadata.name)
             context['task_instance'].xcom_push(key='pod_namespace', value=self.namespace)
             return result
@@ -375,7 +381,7 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
 
     def handle_pod_overlap(
         self, labels: dict, try_numbers_match: bool, launcher: Any, pod: k8s.V1Pod
-    ) -> Tuple[State, Optional[str]]:
+    ) -> Tuple[State, k8s.V1Pod, Optional[str]]:
         """
 
         In cases where the Scheduler restarts while a KubernetesPodOperator task is running,
@@ -400,17 +406,19 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
             log_line += " Will attach to this pod and monitor instead of starting new one"
             self.log.info(log_line)
             self.pod = pod
-            final_state, result = self.monitor_launched_pod(launcher, pod)
+            final_state, remote_pod, result = self.monitor_launched_pod(launcher, pod)
         else:
             log_line += f"creating pod with labels {labels} and launcher {launcher}"
             self.log.info(log_line)
-            final_state, _, result = self.create_new_pod_for_operator(labels, launcher)
-        return final_state, result
+            final_state, remote_pod, result = self.create_new_pod_for_operator(labels, launcher)
+        return final_state, remote_pod, result
 
     @staticmethod
     def _get_pod_identifying_label_string(labels) -> str:
-        filtered_labels = {label_id: label for label_id, label in labels.items() if label_id != 'try_number'}
-        return ','.join(label_id + '=' + label for label_id, label in sorted(filtered_labels.items()))
+        label_strings = [
+            f'{label_id}={label}' for label_id, label in sorted(labels.items()) if label_id != 'try_number'
+        ]
+        return ','.join(label_strings) + ',already_checked!=True'
 
     @staticmethod
     def _try_numbers_match(context, pod) -> bool:
@@ -448,7 +456,7 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
             metadata=k8s.V1ObjectMeta(
                 namespace=self.namespace,
                 labels=self.labels,
-                name=PodGenerator.make_unique_pod_id(self.name),
+                name=self.name,
                 annotations=self.annotations,
             ),
             spec=k8s.V1PodSpec(
@@ -484,6 +492,9 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
 
         pod = PodGenerator.reconcile_pods(pod_template, pod)
 
+        if self.random_name_suffix:
+            pod.metadata.name = PodGenerator.make_unique_pod_id(pod.metadata.name)
+
         for secret in self.secrets:
             self.log.debug("Adding secret to task %s", self.task_id)
             pod = secret.attach_to_pod(pod)
@@ -516,9 +527,10 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
         )
 
         self.log.debug("Starting pod:\n%s", yaml.safe_dump(self.pod.to_dict()))
+        final_state = None
         try:
             launcher.start_pod(self.pod, startup_timeout=self.startup_timeout_seconds)
-            final_state, result = launcher.monitor_pod(pod=self.pod, get_logs=self.get_logs)
+            final_state, remote_pod, result = launcher.monitor_pod(pod=self.pod, get_logs=self.get_logs)
         except AirflowException:
             if self.log_events_on_failure:
                 for event in launcher.read_pod_events(self.pod).items:
@@ -528,7 +540,9 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
             if self.is_delete_operator_pod:
                 self.log.debug("Deleting pod for task %s", self.task_id)
                 launcher.delete_pod(self.pod)
-        return final_state, self.pod, result
+            elif final_state != State.SUCCESS:
+                self.patch_already_checked(self.pod)
+        return final_state, remote_pod, result
 
     def patch_already_checked(self, pod: k8s.V1Pod):
         """Add an "already tried annotation to ensure we only retry once"""
@@ -545,7 +559,7 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
         :return:
         """
         try:
-            (final_state, result) = launcher.monitor_pod(pod, get_logs=self.get_logs)
+            (final_state, remote_pod, result) = launcher.monitor_pod(pod, get_logs=self.get_logs)
         finally:
             if self.is_delete_operator_pod:
                 launcher.delete_pod(pod)
@@ -553,9 +567,10 @@ class KubernetesPodOperator(BaseOperator):  # pylint: disable=too-many-instance-
             if self.log_events_on_failure:
                 for event in launcher.read_pod_events(pod).items:
                     self.log.error("Pod Event: %s - %s", event.reason, event.message)
-            self.patch_already_checked(self.pod)
+            if not self.is_delete_operator_pod:
+                self.patch_already_checked(pod)
             raise AirflowException(f'Pod returned a failure: {final_state}')
-        return final_state, result
+        return final_state, remote_pod, result
 
     def on_kill(self) -> None:
         if self.pod:

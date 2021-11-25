@@ -200,6 +200,78 @@ class WorkerTest(unittest.TestCase):
             docs[0],
         )
 
+    def test_should_create_valid_affinity_tolerations_and_node_selector_override(self):
+        docs = render_chart(
+            values={
+                "executor": "CeleryExecutor",
+                "workers": {
+                    "affinity": {
+                        "nodeAffinity": {
+                            "requiredDuringSchedulingIgnoredDuringExecution": {
+                                "nodeSelectorTerms": [
+                                    {
+                                        "matchExpressions": [
+                                            {"key": "foo", "operator": "In", "values": ["true"]},
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "tolerations": [
+                        {"key": "dynamic-pods", "operator": "Equal", "value": "true", "effect": "NoSchedule"}
+                    ],
+                    "nodeSelector": {"diskType": "ssd"},
+                },
+                "affinity": {
+                    "nodeAffinity": {
+                        "requiredDuringSchedulingIgnoredDuringExecution": {
+                            "nodeSelectorTerms": [
+                                {
+                                    "matchExpressions": [
+                                        {"key": "bar", "operator": "In", "values": ["true"]},
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                },
+                "tolerations": [
+                    {"key": "static-pods", "operator": "Equal", "value": "true", "effect": "NoSchedule"}
+                ],
+                "nodeSelector": {"type": "user-node"},
+            },
+            show_only=["templates/workers/worker-deployment.yaml"],
+        )
+
+        assert "StatefulSet" == jmespath.search("kind", docs[0])
+        assert "bar" == jmespath.search(
+            "spec.template.spec.affinity.nodeAffinity."
+            "requiredDuringSchedulingIgnoredDuringExecution."
+            "nodeSelectorTerms[0]."
+            "matchExpressions[0]."
+            "key",
+            docs[0],
+        )
+        assert "user-node" == jmespath.search(
+            "spec.template.spec.nodeSelector.type",
+            docs[0],
+        )
+        assert "static-pods" == jmespath.search(
+            "spec.template.spec.tolerations[0].key",
+            docs[0],
+        )
+
+    def test_should_create_default_affinity(self):
+        docs = render_chart(show_only=["templates/workers/worker-deployment.yaml"])
+
+        assert {"component": "worker"} == jmespath.search(
+            "spec.template.spec.affinity.podAntiAffinity."
+            "preferredDuringSchedulingIgnoredDuringExecution[0]."
+            "podAffinityTerm.labelSelector.matchLabels",
+            docs[0],
+        )
+
     @parameterized.expand(
         [
             ({"enabled": False}, {"emptyDir": {}}),
@@ -220,9 +292,7 @@ class WorkerTest(unittest.TestCase):
             show_only=["templates/workers/worker-deployment.yaml"],
         )
 
-        assert {"name": "logs", **expected_volume} == jmespath.search(
-            "spec.template.spec.volumes[1]", docs[0]
-        )
+        assert {"name": "logs", **expected_volume} in jmespath.search("spec.template.spec.volumes", docs[0])
 
     def test_worker_resources_are_configurable(self):
         docs = render_chart(
@@ -236,11 +306,27 @@ class WorkerTest(unittest.TestCase):
             },
             show_only=["templates/workers/worker-deployment.yaml"],
         )
+        # main container
         assert "128Mi" == jmespath.search("spec.template.spec.containers[0].resources.limits.memory", docs[0])
+        assert "200m" == jmespath.search("spec.template.spec.containers[0].resources.limits.cpu", docs[0])
+
         assert "169Mi" == jmespath.search(
             "spec.template.spec.containers[0].resources.requests.memory", docs[0]
         )
         assert "300m" == jmespath.search("spec.template.spec.containers[0].resources.requests.cpu", docs[0])
+
+        # initContainer wait-for-airflow-configurations
+        assert "128Mi" == jmespath.search(
+            "spec.template.spec.initContainers[0].resources.limits.memory", docs[0]
+        )
+        assert "200m" == jmespath.search("spec.template.spec.initContainers[0].resources.limits.cpu", docs[0])
+
+        assert "169Mi" == jmespath.search(
+            "spec.template.spec.initContainers[0].resources.requests.memory", docs[0]
+        )
+        assert "300m" == jmespath.search(
+            "spec.template.spec.initContainers[0].resources.requests.cpu", docs[0]
+        )
 
     def test_worker_resources_are_not_added_by_default(self):
         docs = render_chart(
@@ -248,8 +334,10 @@ class WorkerTest(unittest.TestCase):
         )
         assert jmespath.search("spec.template.spec.containers[0].resources", docs[0]) == {}
 
-    def test_no_airflow_local_settings_by_default(self):
-        docs = render_chart(show_only=["templates/workers/worker-deployment.yaml"])
+    def test_no_airflow_local_settings(self):
+        docs = render_chart(
+            values={"airflowLocalSettings": None}, show_only=["templates/workers/worker-deployment.yaml"]
+        )
         volume_mounts = jmespath.search("spec.template.spec.containers[0].volumeMounts", docs[0])
         assert "airflow_local_settings.py" not in str(volume_mounts)
 
@@ -335,6 +423,14 @@ class WorkerTest(unittest.TestCase):
         assert jmespath.search("spec.template.spec.containers[1].command", docs[0]) is None
         assert ["bash", "/clean-logs"] == jmespath.search("spec.template.spec.containers[1].args", docs[0])
 
+    def test_log_groomer_collector_default_retention_days(self):
+        docs = render_chart(show_only=["templates/workers/worker-deployment.yaml"])
+
+        assert "AIRFLOW__LOG_RETENTION_DAYS" == jmespath.search(
+            "spec.template.spec.containers[1].env[0].name", docs[0]
+        )
+        assert "15" == jmespath.search("spec.template.spec.containers[1].env[0].value", docs[0])
+
     @parameterized.expand(
         [
             (None, None),
@@ -367,3 +463,76 @@ class WorkerTest(unittest.TestCase):
 
         assert ["RELEASE-NAME"] == jmespath.search("spec.template.spec.containers[1].command", docs[0])
         assert ["Helm"] == jmespath.search("spec.template.spec.containers[1].args", docs[0])
+
+    @parameterized.expand(
+        [
+            (None, None),
+            (30, "30"),
+        ]
+    )
+    def test_log_groomer_retention_days_overrides(self, retention_days, retention_result):
+        docs = render_chart(
+            values={"workers": {"logGroomerSidecar": {"retentionDays": retention_days}}},
+            show_only=["templates/workers/worker-deployment.yaml"],
+        )
+
+        if retention_result:
+            assert "AIRFLOW__LOG_RETENTION_DAYS" == jmespath.search(
+                "spec.template.spec.containers[1].env[0].name", docs[0]
+            )
+            assert retention_result == jmespath.search(
+                "spec.template.spec.containers[1].env[0].value", docs[0]
+            )
+        else:
+            assert jmespath.search("spec.template.spec.containers[1].env", docs[0]) is None
+
+    def test_dags_gitsync_sidecar_and_init_container(self):
+        docs = render_chart(
+            values={"dags": {"gitSync": {"enabled": True}}},
+            show_only=["templates/workers/worker-deployment.yaml"],
+        )
+
+        assert "git-sync" in [c["name"] for c in jmespath.search("spec.template.spec.containers", docs[0])]
+        assert "git-sync-init" in [
+            c["name"] for c in jmespath.search("spec.template.spec.initContainers", docs[0])
+        ]
+
+    def test_dags_gitsync_with_persistence_no_sidecar_or_init_container(self):
+        docs = render_chart(
+            values={"dags": {"gitSync": {"enabled": True}, "persistence": {"enabled": True}}},
+            show_only=["templates/workers/worker-deployment.yaml"],
+        )
+
+        # No gitsync sidecar or init container
+        assert "git-sync" not in [
+            c["name"] for c in jmespath.search("spec.template.spec.containers", docs[0])
+        ]
+        assert "git-sync-init" not in [
+            c["name"] for c in jmespath.search("spec.template.spec.initContainers", docs[0])
+        ]
+
+    def test_log_groomer_resources(self):
+        docs = render_chart(
+            values={
+                "workers": {
+                    "logGroomerSidecar": {
+                        "resources": {
+                            "requests": {"memory": "2Gi", "cpu": "1"},
+                            "limits": {"memory": "3Gi", "cpu": "2"},
+                        }
+                    }
+                }
+            },
+            show_only=["templates/workers/worker-deployment.yaml"],
+        )
+
+        assert {
+            "limits": {
+                "cpu": "2",
+                "memory": "3Gi",
+            },
+            "requests": {
+                "cpu": "1",
+                "memory": "2Gi",
+            },
+        } == jmespath.search("spec.template.spec.containers[1].resources", docs[0])

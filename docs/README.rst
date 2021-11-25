@@ -20,14 +20,10 @@ Documentation
 
 This directory contains documentation for the Apache Airflow project and other packages that are closely related to it ie. providers packages.  Documentation is built using `Sphinx <https://www.sphinx-doc.org/>`__.
 
-For Helm Chart, see: `/chart/README.md <../chart/README.md>`__
-
 Development documentation preview
 ==================================
 
 Documentation from the development version is built and automatically published: `s.apache.org/airflow-docs <https://s.apache.org/airflow-docs>`_
-
-Documentation for your PRs is available as downloadable artifact in GitHub Actions after the CI builds your PR.
 
 Building documentation
 ======================
@@ -126,7 +122,7 @@ Role ``:class:`` works well with references between packages. If you want to use
 
 .. code-block:: rst
 
-    :doc:`apache-airflow:installation`
+    :doc:`apache-airflow:installation/index`
     :ref:`apache-airflow-providers-google:write-logs-stackdriver`
 
 If you still feel confused then you can view more possible roles for our documentation:

@@ -25,7 +25,7 @@ import pytest
 from airflow import settings
 from airflow.models import DagBag
 from airflow.www.app import create_app
-from tests.test_utils.api_connexion_utils import create_user, delete_roles
+from tests.test_utils.api_connexion_utils import delete_roles
 from tests.test_utils.decorators import dont_initialize_flask_app_submodules
 from tests.test_utils.www import client_with_login
 
@@ -65,7 +65,7 @@ def app(examples_dag_bag):
     app.dag_bag = examples_dag_bag
     app.jinja_env.undefined = jinja2.StrictUndefined
 
-    security_manager = app.appbuilder.sm  # pylint: disable=no-member
+    security_manager = app.appbuilder.sm
     if not security_manager.find_user(username='test'):
         security_manager.add_user(
             username='test',
@@ -112,18 +112,6 @@ def viewer_client(app):
 @pytest.fixture()
 def user_client(app):
     return client_with_login(app, username="test_user", password="test_user")
-
-
-@pytest.fixture(scope="module")
-def client_factory(app):
-    def factory(name, role_name, permissions):
-        create_user(app, name, role_name, permissions)
-        client = app.test_client()
-        resp = client.post("/login/", data={"username": name, "password": name})
-        assert resp.status_code == 302
-        return client
-
-    return factory
 
 
 class _TemplateWithContext(NamedTuple):
@@ -181,7 +169,7 @@ def capture_templates(app):
     def manager() -> Generator[List[_TemplateWithContext], None, None]:
         recorded = []
 
-        def record(sender, template, context, **extra):  # pylint: disable=unused-argument
+        def record(sender, template, context, **extra):
             recorded.append(_TemplateWithContext(template, context))
 
         flask.template_rendered.connect(record, app)  # type: ignore

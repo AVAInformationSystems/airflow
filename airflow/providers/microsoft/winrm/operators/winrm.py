@@ -94,7 +94,6 @@ class WinRMOperator(BaseOperator):
 
         winrm_client = self.winrm_hook.get_conn()
 
-        # pylint: disable=too-many-nested-blocks
         try:
             if self.ps_path is not None:
                 self.log.info("Running command as powershell script: '%s'...", self.command)
@@ -114,7 +113,7 @@ class WinRMOperator(BaseOperator):
             command_done = False
             while not command_done:
                 try:
-                    # pylint: disable=protected-access
+
                     (
                         stdout,
                         stderr,
@@ -154,7 +153,8 @@ class WinRMOperator(BaseOperator):
             else:
                 return b64encode(b''.join(stdout_buffer)).decode(self.output_encoding)
         else:
-            error_msg = "Error running cmd: {}, return code: {}, error: {}".format(
-                self.command, return_code, b''.join(stderr_buffer).decode(self.output_encoding)
+            stderr_output = b''.join(stderr_buffer).decode(self.output_encoding)
+            error_msg = (
+                f"Error running cmd: {self.command}, return code: {return_code}, error: {stderr_output}"
             )
             raise AirflowException(error_msg)

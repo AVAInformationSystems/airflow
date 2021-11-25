@@ -29,11 +29,19 @@ description: |
       - `Google Workspace <https://workspace.google.pl/>`__ (formerly Google Suite)
 
 versions:
+  - 6.1.0
+  - 6.0.0
+  - 5.1.0
+  - 5.0.0
+  - 4.0.0
   - 3.0.0
   - 2.2.0
   - 2.1.0
   - 2.0.0
   - 1.0.0
+
+additional-dependencies:
+  - apache-airflow>=2.1.0
 
 integrations:
   - integration-name: Google Analytics360
@@ -222,6 +230,11 @@ integrations:
       - /docs/apache-airflow-providers-google/operators/cloud/dataprep.rst
     logo: /integration-logos/gcp/Google-Dataprep.png
     tags: [gcp]
+  - integration-name: Google Dataproc Metastore
+    external-doc-url: https://cloud.google.com/dataproc-metastore/
+    how-to-guide:
+      - /docs/apache-airflow-providers-google/operators/cloud/dataproc_metastore.rst
+    tags: [gcp]
   - integration-name: Google Dataproc
     external-doc-url: https://cloud.google.com/dataproc/
     how-to-guide:
@@ -360,6 +373,9 @@ operators:
   - integration-name: Google Dataprep
     python-modules:
       - airflow.providers.google.cloud.operators.dataprep
+  - integration-name: Google Dataproc Metastore
+    python-modules:
+      - airflow.providers.google.cloud.operators.dataproc_metastore
   - integration-name: Google Dataproc
     python-modules:
       - airflow.providers.google.cloud.operators.dataproc
@@ -457,6 +473,9 @@ sensors:
   - integration-name: Google Dataflow
     python-modules:
       - airflow.providers.google.cloud.sensors.dataflow
+  - integration-name: Google Data Fusion
+    python-modules:
+      - airflow.providers.google.cloud.sensors.datafusion
   - integration-name: Google Dataproc
     python-modules:
       - airflow.providers.google.cloud.sensors.dataproc
@@ -526,6 +545,9 @@ hooks:
   - integration-name: Google Dataprep
     python-modules:
       - airflow.providers.google.cloud.hooks.dataprep
+  - integration-name: Google Dataproc Metastore
+    python-modules:
+      - airflow.providers.google.cloud.hooks.dataproc_metastore
   - integration-name: Google Dataproc
     python-modules:
       - airflow.providers.google.cloud.hooks.dataproc
@@ -674,6 +696,9 @@ transfers:
   - source-integration-name: Google BigQuery
     target-integration-name: MySQL
     python-module: airflow.providers.google.cloud.transfers.bigquery_to_mysql
+  - source-integration-name: Google BigQuery
+    target-integration-name: Microsoft SQL Server (MSSQL)
+    python-module: airflow.providers.google.cloud.transfers.bigquery_to_mssql
   - source-integration-name: Google Cloud Storage (GCS)
     target-integration-name: Google BigQuery
     python-module: airflow.providers.google.cloud.transfers.gcs_to_bigquery
@@ -707,6 +732,10 @@ transfers:
     target-integration-name: Google Spreadsheet
     how-to-guide: /docs/apache-airflow-providers-google/operators/transfer/gcs_to_sheets.rst
     python-module: airflow.providers.google.suite.transfers.gcs_to_sheets
+  - source-integration-name: SQL
+    target-integration-name: Google Spreadsheet
+    how-to-guide: /docs/apache-airflow-providers-google/operators/transfer/sql_to_sheets.rst
+    python-module: airflow.providers.google.suite.transfers.sql_to_sheets
   - source-integration-name: Local
     target-integration-name: Google Cloud Storage (GCS)
     how-to-guide: /docs/apache-airflow-providers-google/operators/transfer/local_to_gcs.rst
@@ -730,7 +759,7 @@ transfers:
     target-integration-name: Google Cloud Storage (GCS)
     python-module: airflow.providers.google.ads.transfers.ads_to_gcs
 
-hook-class-names:
+hook-class-names:  # deprecated - to be removed after providers add dependency on Airflow 2.2.0+
   - airflow.providers.google.common.hooks.base_google.GoogleBaseHook
   - airflow.providers.google.cloud.hooks.dataprep.GoogleDataprepHook
   - airflow.providers.google.cloud.hooks.cloud_sql.CloudSQLHook
@@ -738,6 +767,22 @@ hook-class-names:
   - airflow.providers.google.cloud.hooks.compute_ssh.ComputeEngineSSHHook
   - airflow.providers.google.cloud.hooks.bigquery.BigQueryHook
   - airflow.providers.google.leveldb.hooks.leveldb.LevelDBHook
+
+connection-types:
+  - hook-class-name: airflow.providers.google.common.hooks.base_google.GoogleBaseHook
+    connection-type: google_cloud_platform
+  - hook-class-name: airflow.providers.google.cloud.hooks.dataprep.GoogleDataprepHook
+    connection-type: dataprep
+  - hook-class-name: airflow.providers.google.cloud.hooks.cloud_sql.CloudSQLHook
+    connection-type: gcpcloudsql
+  - hook-class-name: airflow.providers.google.cloud.hooks.cloud_sql.CloudSQLDatabaseHook
+    connection-type: gcpcloudsqldb
+  - hook-class-name: airflow.providers.google.cloud.hooks.bigquery.BigQueryHook
+    connection-type: gcpbigquery
+  - hook-class-name: airflow.providers.google.cloud.hooks.compute_ssh.ComputeEngineSSHHook
+    connection-type: gcpssh
+  - hook-class-name: airflow.providers.google.leveldb.hooks.leveldb.LevelDBHook
+    connection-type: leveldb
 
 extra-links:
   - airflow.providers.google.cloud.operators.bigquery.BigQueryConsoleLink
@@ -749,3 +794,13 @@ extra-links:
 additional-extras:
   apache.beam: apache-beam[gcp]
   leveldb: plyvel
+
+secrets-backends:
+  - airflow.providers.google.cloud.secrets.secret_manager.CloudSecretManagerBackend
+
+auth-backends:
+  - airflow.providers.google.common.auth_backend.google_openid
+
+logging:
+  - airflow.providers.google.cloud.log.gcs_task_handler.GCSTaskHandler
+  - airflow.providers.google.cloud.log.stackdriver_task_handler.StackdriverTaskHandler

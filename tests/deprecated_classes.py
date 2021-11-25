@@ -220,23 +220,23 @@ HOOKS = [
         'airflow.contrib.hooks.fs_hook.FSHook',
     ),
     (
-        'airflow.providers.microsoft.azure.hooks.azure_container_instance.AzureContainerInstanceHook',
+        'airflow.providers.microsoft.azure.hooks.container_instance.AzureContainerInstanceHook',
         'airflow.contrib.hooks.azure_container_instance_hook.AzureContainerInstanceHook',
     ),
     (
-        'airflow.providers.microsoft.azure.hooks.azure_container_registry.AzureContainerRegistryHook',
+        'airflow.providers.microsoft.azure.hooks.container_registry.AzureContainerRegistryHook',
         'airflow.contrib.hooks.azure_container_registry_hook.AzureContainerRegistryHook',
     ),
     (
-        'airflow.providers.microsoft.azure.hooks.azure_container_volume.AzureContainerVolumeHook',
+        'airflow.providers.microsoft.azure.hooks.container_volume.AzureContainerVolumeHook',
         'airflow.contrib.hooks.azure_container_volume_hook.AzureContainerVolumeHook',
     ),
     (
-        'airflow.providers.microsoft.azure.hooks.azure_cosmos.AzureCosmosDBHook',
+        'airflow.providers.microsoft.azure.hooks.cosmos.AzureCosmosDBHook',
         'airflow.contrib.hooks.azure_cosmos_hook.AzureCosmosDBHook',
     ),
     (
-        'airflow.providers.microsoft.azure.hooks.azure_fileshare.AzureFileShareHook',
+        'airflow.providers.microsoft.azure.hooks.fileshare.AzureFileShareHook',
         'airflow.contrib.hooks.azure_fileshare_hook.AzureFileShareHook',
     ),
     (
@@ -1024,16 +1024,15 @@ OPERATORS = [
         'airflow.operators.pig_operator.PigOperator',
     ),
     (
-        'airflow.providers.microsoft.azure.operators.adls_list.AzureDataLakeStorageListOperator',
+        'airflow.providers.microsoft.azure.operators.adls.ADLSListOperator',
         'airflow.contrib.operators.adls_list_operator.AzureDataLakeStorageListOperator',
     ),
     (
-        'airflow.providers.microsoft.azure.operators'
-        '.azure_container_instances.AzureContainerInstancesOperator',
+        'airflow.providers.microsoft.azure.operators.container_instances.AzureContainerInstancesOperator',
         'airflow.contrib.operators.azure_container_instances_operator.AzureContainerInstancesOperator',
     ),
     (
-        'airflow.providers.microsoft.azure.operators.azure_cosmos.AzureCosmosInsertDocumentOperator',
+        'airflow.providers.microsoft.azure.operators.cosmos.AzureCosmosInsertDocumentOperator',
         'airflow.contrib.operators.azure_cosmos_operator.AzureCosmosInsertDocumentOperator',
     ),
     (
@@ -1717,7 +1716,7 @@ TRANSFERS = [
         'airflow.operators.mssql_to_hive.MsSqlToHiveTransfer',
     ),
     (
-        'airflow.providers.microsoft.azure.transfers.file_to_wasb.FileToWasbOperator',
+        'airflow.providers.microsoft.azure.transfers.local_to_wasb.LocalFilesystemToWasbOperator',
         'airflow.contrib.operators.file_to_wasb.FileToWasbOperator',
     ),
     (

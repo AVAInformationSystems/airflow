@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""This module contains operator to move data from Hive to S3 bucket."""
+"""This module contains an operator to move data from an S3 bucket to Hive."""
 
 import bz2
 import gzip
@@ -32,7 +32,7 @@ from airflow.providers.apache.hive.hooks.hive import HiveCliHook
 from airflow.utils.compression import uncompress_file
 
 
-class S3ToHiveOperator(BaseOperator):  # pylint: disable=too-many-instance-attributes
+class S3ToHiveOperator(BaseOperator):
     """
     Moves data from S3 to Hive. The operator downloads a file from S3,
     stores the file locally before loading it into a Hive table.
@@ -103,7 +103,7 @@ class S3ToHiveOperator(BaseOperator):  # pylint: disable=too-many-instance-attri
     template_ext = ()
     ui_color = '#a0e08c'
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(
         self,
         *,
         s3_key: str,
@@ -143,7 +143,7 @@ class S3ToHiveOperator(BaseOperator):  # pylint: disable=too-many-instance-attri
         self.select_expression = select_expression
 
         if self.check_headers and not (self.field_dict is not None and self.headers):
-            raise AirflowException("To check_headers provide " + "field_dict and headers")
+            raise AirflowException("To check_headers provide field_dict and headers")
 
     def execute(self, context):
         # Downloading file from S3
@@ -162,7 +162,7 @@ class S3ToHiveOperator(BaseOperator):  # pylint: disable=too-many-instance-attri
 
         _, file_ext = os.path.splitext(s3_key_object.key)
         if self.select_expression and self.input_compressed and file_ext.lower() != '.gz':
-            raise AirflowException("GZIP is the only compression " + "format Amazon S3 Select supports")
+            raise AirflowException("GZIP is the only compression format Amazon S3 Select supports")
 
         with TemporaryDirectory(prefix='tmps32hive_') as tmp_dir, NamedTemporaryFile(
             mode="wb", dir=tmp_dir, suffix=file_ext

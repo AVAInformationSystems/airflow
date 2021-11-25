@@ -50,15 +50,15 @@ the metrics that start with the elements of the list:
     statsd_allow_list = scheduler,executor,dagrun
 
 If you want to redirect metrics to different name, you can configure ``stat_name_handler`` option
-in ``[scheduler]`` section.  It should point to a function that validate the statsd stat name, apply changes
-to the stat name if necessary and return the transformed stat name. The function may looks as follow:
+in ``[scheduler]`` section.  It should point to a function that validates the statsd stat name, applies changes
+to the stat name if necessary, and returns the transformed stat name. The function may looks as follow:
 
 .. code-block:: python
 
     def my_custom_stat_name_handler(stat_name: str) -> str:
         return stat_name.lower()[:32]
 
-If you want to use a custom Statsd client outwith the default one provided by Airflow the following key must be added
+If you want to use a custom Statsd client instead of the default one provided by Airflow, the following key must be added
 to the configuration file alongside the module path of your custom Statsd client. This module must be available on
 your :envvar:`PYTHONPATH`.
 
@@ -110,6 +110,10 @@ Name                                        Description
 ``task_restored_to_dag.<dagid>``            Number of tasks restored for a given dag (i.e. task instance which was
                                             previously in REMOVED state in the DB is added to DAG file)
 ``task_instance_created-<operator_name>``   Number of tasks instances created for a given Operator
+``triggers.blocked_main_thread``            Number of triggers that blocked the main thread (likely due to not being
+                                            fully asynchronous)
+``triggers.failed``                         Number of triggers that errored before they could fire an event
+``triggers.succeeded``                      Number of triggers that have fired at least one event
 =========================================== ================================================================
 
 Gauges
@@ -118,13 +122,12 @@ Gauges
 =================================================== ========================================================================
 Name                                                Description
 =================================================== ========================================================================
-``dagbag_size``                                     DAG bag size
+``dagbag_size``                                     Number of DAGs found when the scheduler ran a scan based on it's
+                                                    configuration
 ``dag_processing.import_errors``                    Number of errors from trying to parse DAG files
 ``dag_processing.total_parse_time``                 Seconds taken to scan and import all DAG files once
-``dag_processing.last_runtime.<dag_file>``          Seconds spent processing ``<dag_file>`` (in most recent iteration)
 ``dag_processing.last_run.seconds_ago.<dag_file>``  Seconds since ``<dag_file>`` was last processed
 ``dag_processing.processor_timeouts``               Number of file processors that have been killed due to taking too long
-``scheduler.tasks.without_dagrun``                  Number of tasks without DagRuns or with DagRuns not in Running state
 ``scheduler.tasks.running``                         Number of tasks running in executor
 ``scheduler.tasks.starving``                        Number of tasks that cannot be scheduled because of no open slot in pool
 ``scheduler.tasks.executable``                      Number of tasks that are ready for execution (set to queued)
@@ -142,6 +145,7 @@ Name                                                Description
 ``smart_sensor_operator.poked_exception``           Number of exceptions in the previous smart sensor poking loop
 ``smart_sensor_operator.exception_failures``        Number of failures caused by exception in the previous smart sensor poking loop
 ``smart_sensor_operator.infra_failures``            Number of infrastructure failures in the previous smart sensor poking loop
+``triggers.running``                                Number of triggers currently running (per triggerer)
 =================================================== ========================================================================
 
 Timers

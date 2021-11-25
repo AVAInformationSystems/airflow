@@ -39,9 +39,6 @@ echo
 echo "Airflow home: ${AIRFLOW_HOME}"
 echo "Airflow sources: ${AIRFLOW_SOURCES}"
 echo "Airflow core SQL connection: ${AIRFLOW__CORE__SQL_ALCHEMY_CONN:=}"
-if [[ -n "${AIRFLOW__CORE__SQL_ENGINE_COLLATION_FOR_IDS=}" ]]; then
-    echo "Airflow collation for IDs: ${AIRFLOW__CORE__SQL_ENGINE_COLLATION_FOR_IDS}"
-fi
 
 echo
 
@@ -55,7 +52,7 @@ else
     export RUN_AIRFLOW_1_10="false"
 fi
 
-if [[ -z ${USE_AIRFLOW_VERSION=} ]]; then
+if [[ ${USE_AIRFLOW_VERSION} == "" ]]; then
     export PYTHONPATH=${AIRFLOW_SOURCES}
     echo
     echo "Using already installed airflow version"
@@ -187,6 +184,7 @@ ssh-keyscan -H localhost >> ~/.ssh/known_hosts 2>/dev/null
 
 cd "${AIRFLOW_SOURCES}"
 
+echo "START_AIRFLOW:=${START_AIRFLOW}"
 if [[ ${START_AIRFLOW:="false"} == "true" ]]; then
     export AIRFLOW__CORE__LOAD_DEFAULT_CONNECTIONS=${LOAD_DEFAULT_CONNECTIONS}
     export AIRFLOW__CORE__LOAD_EXAMPLES=${LOAD_EXAMPLES}
@@ -207,18 +205,17 @@ EXTRA_PYTEST_ARGS=(
     "--verbosity=0"
     "--strict-markers"
     "--durations=100"
-    "--cov=airflow/"
-    "--cov-config=.coveragerc"
-    "--cov-report=xml:/files/coverage-${TEST_TYPE}-${BACKEND}.xml"
-    "--color=yes"
     "--maxfail=50"
+    "--color=yes"
     "--pythonwarnings=ignore::DeprecationWarning"
     "--pythonwarnings=ignore::PendingDeprecationWarning"
     "--junitxml=${RESULT_LOG_FILE}"
     # timeouts in seconds for individual tests
-    "--setup-timeout=20"
+    "--timeouts-order"
+    "moi"
+    "--setup-timeout=60"
     "--execution-timeout=60"
-    "--teardown-timeout=20"
+    "--teardown-timeout=60"
     # Only display summary for non-expected case
     # f - failed
     # E - error
@@ -239,6 +236,14 @@ if [[ "${TEST_TYPE}" == "Helm" ]]; then
 else
     EXTRA_PYTEST_ARGS+=(
         "--with-db-init"
+    )
+fi
+
+if [[ ${ENABLE_TEST_COVERAGE:="false"} == "true" ]]; then
+    EXTRA_PYTEST_ARGS+=(
+        "--cov=airflow/"
+        "--cov-config=.coveragerc"
+        "--cov-report=xml:/files/coverage-${TEST_TYPE}-${BACKEND}.xml"
     )
 fi
 
@@ -326,9 +331,9 @@ fi
 readonly SELECTED_TESTS CLI_TESTS API_TESTS PROVIDERS_TESTS CORE_TESTS WWW_TESTS \
     ALL_TESTS ALL_PRESELECTED_TESTS
 
-if [[ -n ${RUN_INTEGRATION_TESTS=} ]]; then
+if [[ -n ${LIST_OF_INTEGRATION_TESTS_TO_RUN=} ]]; then
     # Integration tests
-    for INT in ${RUN_INTEGRATION_TESTS}
+    for INT in ${LIST_OF_INTEGRATION_TESTS_TO_RUN}
     do
         EXTRA_PYTEST_ARGS+=("--integration" "${INT}")
     done

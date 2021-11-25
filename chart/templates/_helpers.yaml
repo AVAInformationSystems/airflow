@@ -52,6 +52,11 @@ If release name contains chart name it will be used as a full name.
       secretKeyRef:
         name: {{ template "airflow_metadata_secret" . }}
         key: connection
+  - name: AIRFLOW__WEBSERVER__SECRET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: {{ template "webserver_secret_key_secret" . }}
+        key: webserver-secret-key
   {{- if or (eq .Values.executor "CeleryExecutor") (eq .Values.executor "CeleryKubernetesExecutor") }}
   - name: AIRFLOW__CELERY__CELERY_RESULT_BACKEND
     valueFrom:
@@ -135,7 +140,7 @@ If release name contains chart name it will be used as a full name.
 
 {{/*  Git sync container */}}
 {{- define "git_sync_container"}}
-- name: {{ .Values.dags.gitSync.containerName }}
+- name: {{ .Values.dags.gitSync.containerName }}{{ if .is_init }}-init{{ end }}
   image: {{ template "git_sync_image" . }}
   imagePullPolicy: {{ .Values.images.gitSync.pullPolicy }}
   securityContext:
@@ -228,6 +233,14 @@ If release name contains chart name it will be used as a full name.
 {{ printf "%s:%s" .Values.defaultAirflowRepository .Values.defaultAirflowTag }}
 {{- end }}
 
+{{ define "airflow_image_for_migrations" -}}
+{{- if .Values.images.useDefaultImageForMigration -}}
+{{ template "default_airflow_image" . }}
+{{- else -}}
+{{ template "airflow_image" . }}
+{{- end -}}
+{{- end }}
+
 {{ define "flower_image" -}}
 {{ printf "%s:%s" (.Values.images.flower.repository | default .Values.defaultAirflowRepository) (.Values.images.flower.tag | default .Values.defaultAirflowTag) }}
 {{- end }}
@@ -254,6 +267,10 @@ If release name contains chart name it will be used as a full name.
 
 {{ define "fernet_key_secret" -}}
 {{ default (printf "%s-fernet-key" .Release.Name) .Values.fernetKeySecretName }}
+{{- end }}
+
+{{ define "webserver_secret_key_secret" -}}
+{{ default (printf "%s-webserver-secret-key" .Release.Name) .Values.webserverSecretKeySecretName }}
 {{- end }}
 
 {{ define "redis_password_secret" -}}
@@ -492,6 +509,17 @@ Create the name of the worker service account to use
 {{- end -}}
 
 {{/*
+Create the name of the triggerer service account to use
+*/}}
+{{- define "triggerer.serviceAccountName" -}}
+{{- if .Values.triggerer.serviceAccount.create -}}
+    {{ default (printf "%s-triggerer" (include "airflow.fullname" .)) .Values.triggerer.serviceAccount.name }}
+{{- else -}}
+    {{ default "default" .Values.triggerer.serviceAccount.name }}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Create the name of the pgbouncer service account to use
 */}}
 {{- define "pgbouncer.serviceAccountName" -}}
@@ -514,7 +542,11 @@ Create the name of the cleanup service account to use
 {{- end -}}
 
 {{ define "wait-for-migrations-command" }}
-  {{/* From Airflow 2.0.0 this can become [airflow, db, check-migrations] */}}
+  {{- if semverCompare ">=2.0.0" .Values.airflowVersion }}
+  - airflow
+  - db
+  - check-migrations
+  {{- else }}
   - python
   - -c
   - |
@@ -553,6 +585,7 @@ Create the name of the cleanup service account to use
                 ticker += 1
                 time.sleep(1)
                 logging.info('Waiting for migrations... %s second(s)', ticker)
+  {{- end }}
 {{- end }}
 
 {{ define "registry_docker_config" -}}
@@ -572,3 +605,13 @@ Create the name of the cleanup service account to use
   {{- $_ := set $config "auths" $auth -}}
   {{ $config | toJson | print }}
 {{- end }}
+
+{{/* Allow Kubernetes Version to be overridden. Credit to https://github.com/prometheus-community/helm-charts for Regex. */}}
+{{- define "kubeVersion" -}}
+  {{- $kubeVersion := default .Capabilities.KubeVersion.Version .Values.kubeVersionOverride -}}
+  {{/* Special use case for Amazon EKS, Google GKE */}}
+  {{- if and (regexMatch "\\d+\\.\\d+\\.\\d+-(?:eks|gke).+" $kubeVersion) (not .Values.kubeVersionOverride) -}}
+    {{- $kubeVersion = regexFind "\\d+\\.\\d+\\.\\d+" $kubeVersion -}}
+  {{- end -}}
+  {{- $kubeVersion -}}
+{{- end -}}

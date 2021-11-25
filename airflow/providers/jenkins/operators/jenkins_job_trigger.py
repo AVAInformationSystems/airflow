@@ -168,7 +168,7 @@ class JenkinsJobTriggerOperator(BaseOperator):
             )
             if location_answer is not None:
                 json_response = json.loads(location_answer['body'])
-                if 'executable' in json_response:
+                if 'executable' in json_response and 'number' in json_response['executable']:
                     build_number = json_response['executable']['number']
                     self.log.info('Job executed on Jenkins side with the build number %s', build_number)
                     return build_number
@@ -211,7 +211,7 @@ class JenkinsJobTriggerOperator(BaseOperator):
         time.sleep(self.sleep_time)
         keep_polling_job = True
         build_info = None
-        # pylint: disable=too-many-nested-blocks
+
         while keep_polling_job:
             try:
                 build_info = jenkins_server.get_build_info(name=self.job_name, number=build_number)
@@ -220,15 +220,14 @@ class JenkinsJobTriggerOperator(BaseOperator):
                     # Check if job ended with not allowed state.
                     if build_info['result'] not in self.allowed_jenkins_states:
                         raise AirflowException(
-                            'Jenkins job failed, final state : %s.'
-                            'Find more information on job url : %s'
-                            % (build_info['result'], build_info['url'])
+                            f"Jenkins job failed, final state : {build_info['result']}. "
+                            f"Find more information on job url : {build_info['url']}"
                         )
                 else:
                     self.log.info('Waiting for job to complete : %s , build %s', self.job_name, build_number)
                     time.sleep(self.sleep_time)
             except jenkins.NotFoundException as err:
-                # pylint: disable=no-member
+
                 raise AirflowException(f'Jenkins job status check failed. Final error was: {err.resp.status}')
             except jenkins.JenkinsException as err:
                 raise AirflowException(
