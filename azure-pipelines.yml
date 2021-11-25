@@ -41,7 +41,7 @@ stages:
         - task: Docker@2
           displayName: Build and push Docker image
           inputs:
-            repository: base-images/airflow-2.0.2
+            repository: base-images/airflow-2.2.2
             containerRegistry: ava-acr-main
             tags: |
               master-$(GitCommitShort)
